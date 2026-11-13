@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(blindside VERSION 4.0.0 LANGUAGES CXX)
+project(blindside VERSION 4.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -81,6 +81,7 @@ target_link_libraries(blindside_daemon PRIVATE blindside_lib)
 
 # Copy Models to output directory for all platforms
 add_custom_command(TARGET blindside_daemon POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/models"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/models" "$<TARGET_FILE_DIR:blindside_daemon>/models"
 )
 

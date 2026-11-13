@@ -85,6 +85,7 @@ bool CameraCapture::grab_frame(RawFrame& frame) {
     frame.channels = 3;
 
     if (synthetic_mode_) {
+        frame.is_synthetic = true;
         // Generate synthetic frame buffer (BGR gradient image)
         frame.buffer.resize(frame.width * frame.height * 3);
         uint8_t base_color = static_cast<uint8_t>((frame_counter_ * 5) % 256);
@@ -93,6 +94,54 @@ bool CameraCapture::grab_frame(RawFrame& frame) {
             frame.buffer[i]     = base_color;       // Blue
             frame.buffer[i + 1] = 120;              // Green
             frame.buffer[i + 2] = 200 - base_color; // Red
+        }
+
+        // Generate synthetic primary user face (centered in frame with micro-movements)
+        frame.synthetic_faces.clear();
+        double t = static_cast<double>(frame_counter_) * 0.15;
+        float jitter_x = static_cast<float>(std::sin(t) * 1.5);
+        float jitter_y = static_cast<float>(std::cos(t * 0.7) * 1.2);
+
+        float fw = static_cast<float>(frame.width);
+        float fh = static_cast<float>(frame.height);
+
+        FaceBox primary_box;
+        primary_box.width = fw * 0.28f;
+        primary_box.height = fh * 0.38f;
+        primary_box.x = (fw - primary_box.width) * 0.5f + jitter_x;
+        primary_box.y = (fh - primary_box.height) * 0.5f + jitter_y;
+        primary_box.confidence = 0.95f;
+
+        float pcx = primary_box.center_x();
+        float pcy = primary_box.center_y();
+        primary_box.landmarks[0] = {pcx - fw * 0.06f, pcy - fh * 0.05f}; // Right eye
+        primary_box.landmarks[1] = {pcx + fw * 0.06f, pcy - fh * 0.05f}; // Left eye
+        primary_box.landmarks[2] = {pcx, pcy};                            // Nose
+        primary_box.landmarks[3] = {pcx - fw * 0.04f, pcy + fh * 0.07f}; // Right mouth
+        primary_box.landmarks[4] = {pcx + fw * 0.04f, pcy + fh * 0.07f}; // Left mouth
+        frame.synthetic_faces.push_back(primary_box);
+
+        // If synthetic eavesdropper is injected, generate secondary face
+        if (synthetic_eavesdropper_present_) {
+            FaceBox eavesdropper_box;
+            eavesdropper_box.width = fw * 0.18f;
+            eavesdropper_box.height = fh * 0.24f;
+            float ejitter_x = static_cast<float>(std::sin(t * 1.3) * 1.0);
+            float ejitter_y = static_cast<float>(std::cos(t * 0.9) * 0.8);
+            eavesdropper_box.x = fw * 0.08f + ejitter_x;
+            eavesdropper_box.y = fh * 0.12f + ejitter_y;
+            eavesdropper_box.confidence = 0.92f;
+
+            float ecx = eavesdropper_box.center_x();
+            float ecy = eavesdropper_box.center_y();
+            float yaw_shift = static_cast<float>(synthetic_eavesdropper_yaw_ * 0.35);
+
+            eavesdropper_box.landmarks[0] = {ecx - fw * 0.04f, ecy - fh * 0.035f};
+            eavesdropper_box.landmarks[1] = {ecx + fw * 0.04f, ecy - fh * 0.035f};
+            eavesdropper_box.landmarks[2] = {ecx + yaw_shift, ecy};
+            eavesdropper_box.landmarks[3] = {ecx - fw * 0.03f, ecy + fh * 0.045f};
+            eavesdropper_box.landmarks[4] = {ecx + fw * 0.03f, ecy + fh * 0.045f};
+            frame.synthetic_faces.push_back(eavesdropper_box);
         }
 
         // Simulate frame timing based on current target FPS

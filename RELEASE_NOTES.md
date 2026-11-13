@@ -2,6 +2,42 @@
 
 ---
 
+## Blindside V4.1.0 — Architecture Integrity, Per-Track Liveness & Primary Absence Release (2026-11-13)
+
+> **Release Status**: Formal Maintenance & Feature Hardening Release.
+
+Blindside V4.1.0 resolves key architectural debt identified in the V4.0 generational audit, delivering per-track liveness isolation, automated primary user absence defense (THREAT-03), synthetic end-to-end pipeline testing, transition-based threat log deduplication, and cross-platform runtime reliability.
+
+### Key Highlights of V4.1.0
+
+#### 1. Per-Track Liveness & Anti-Spoofing Architecture
+- **Dedicated History Buffers**: Migrated rolling 45-sample pose history buffers into individual `SecondaryFaceTrack` instances.
+- **Cross-Contamination Eliminated**: Involuntary angular micro-motion (pitch/yaw variance $\ge 0.02$) is evaluated strictly per track ID. A moving live human and a static spoof photograph in the same frame maintain independent classifications.
+- **FAR Geometric Proxy**: Clarified that 5-point landmark models provide eye centroids without eyelid contours. Replaced misleading EAR/blink claims with an anthropometric Facial Aspect Ratio (FAR) deformation proxy (`compute_facial_aspect_ratio()`), preserving `compute_ear()` compatibility aliases.
+
+#### 2. Primary User Absence Defense (THREAT-03)
+- **Configurable Dwell & Timeout**: Enforces `primary_absence_timeout_sec` (default: 5.0s) before elevating to screen lock or workspace redaction, preventing false triggers from single missed frames or brief head turns.
+- **Return Recovery Hysteresis**: Requires sustained presence for `primary_recovery_dwell_sec` (default: 0.5s) when the user returns before clearing active defenses.
+- **Camera Failure & Disconnect Isolation**: If the camera fails or disconnects, absence timers are paused. If an absence defense was already active when disconnection occurred, the lock state is preserved so the workstation does not unlock.
+
+#### 3. Synthetic Eavesdropper Injection Pipeline
+- **Deterministic Simulation**: Added `CameraCapture::set_synthetic_eavesdropper()`, generating synthetic primary and secondary faces with anthropometric landmarks and realistic micro-movement jitter.
+- **Full End-to-End Coverage**: Synthetic mode exercises the genuine OpenCV `solvePnP` pose estimation, gaze math, temporal tracking, and privacy trigger lifecycle without requiring physical hardware webcams or models on disk.
+- **Pipeline Test Suite**: Added `test_pipeline.cpp` validating detection, calibration, threat elevation, and recovery.
+
+#### 4. Transition-Based Audit Log Deduplication
+- **Transition Gating**: Security event logging to `blindside_threats.log` (NIST SP 800-53 PE-3) now records state transitions (`_ACTIVATED`, `_ESCALATED`, `_DEACTIVATED`) instead of logging at active framerate (30 Hz).
+- **Reduced Disk I/O**: Eliminates redundant log spam during sustained threats while maintaining an auditable security event trail.
+
+#### 5. Concurrency, Portability & Build Hardening
+- **Daemon State Thread-Safety**: Eliminated data race on `config_.daemon_state` across worker threads by utilizing thread-safe `atomic_state_` overrides.
+- **Linux X11 Headless Resilience**: Handled headless Linux container environments gracefully where `XOpenDisplay` returns `nullptr`, allowing daemon initialization to succeed without crashing.
+- **RingBuffer Test Stability**: Resolved consumer wait deadlocks in concurrent queue unit tests with explicit capacity boundaries and stop notifications.
+- **Packaging & Dependency Fixes**: Pinned CI container to Ubuntu 24.04 LTS with standard `libopencv-dev`; verified exact 64-hex SHA256 integrity for YuNet model download.
+- **Python Reference Portability**: Guarded `ctypes.wintypes` Windows-specific imports, enabling `run_blindside.py` to execute across Linux and macOS.
+
+---
+
 ## Blindside V4.0.0 — Platform Hardening & Architecture Release (2026-10-04)
 
 > **Release Status**: Formal Release.

@@ -35,6 +35,10 @@ bool FaceDetector::initialize(const std::string& model_path) {
 }
 
 std::vector<FaceBox> FaceDetector::detect(const RawFrame& frame) {
+    if (frame.is_synthetic) {
+        return frame.synthetic_faces;
+    }
+
     std::vector<FaceBox> results;
     if (!initialized_ || !detector_ptr_ || frame.buffer.empty()) return results;
 

@@ -78,6 +78,10 @@ void PrivacyTriggerManager::clear_alerts() {
         targeted_blur_active_ = false;
         platform_manager_->clear_alerts();
     }
+    if (current_threat_state_ != "CLEARED") {
+        log_threat_event(current_threat_state_ + "_DEACTIVATED", 0.0, 0, false);
+        current_threat_state_ = "CLEARED";
+    }
 }
 
 void PrivacyTriggerManager::log_threat_event(const std::string& threat_type, double gaze_duration_sec, size_t face_count, bool live_verified) {
@@ -100,19 +104,42 @@ void PrivacyTriggerManager::log_threat_event(const std::string& threat_type, dou
 }
 
 void PrivacyTriggerManager::execute_triggers(const FrameResult& result) {
-    if (result.trigger_targeted_blur) {
+    std::string new_threat_state = "CLEARED";
+    std::string threat_name = "";
+    double dur = 0.0;
+
+    if (result.trigger_hard_defense) {
+        threat_name = result.primary_absence_triggered ? "PRIMARY_USER_ABSENT_LOCK" : "HARD_WORKSTATION_LOCK";
+        dur = result.primary_absence_triggered ? result.primary_absence_duration_sec : result.secondary_gaze_duration_sec;
+        trigger_hard_defense(result.primary_absence_triggered ? "Primary user absent - workstation locked" : "Shoulder surfer detected");
+        new_threat_state = threat_name;
+    } else if (result.trigger_targeted_blur) {
         WindowRect active_rect = get_active_window_geometry();
         trigger_targeted_blur(active_rect);
-        log_threat_event("TARGETED_WORKSPACE_BLUR", result.secondary_gaze_duration_sec, result.faces.size(), result.secondary_liveness_verified);
-    } else if (result.trigger_hard_defense) {
-        trigger_hard_defense();
-        log_threat_event("HARD_WORKSTATION_LOCK", result.secondary_gaze_duration_sec, result.faces.size(), result.secondary_liveness_verified);
+        threat_name = result.primary_absence_triggered ? "PRIMARY_USER_ABSENT_BLUR" : "TARGETED_WORKSPACE_BLUR";
+        dur = result.primary_absence_triggered ? result.primary_absence_duration_sec : result.secondary_gaze_duration_sec;
+        new_threat_state = threat_name;
     } else if (result.trigger_soft_alert) {
         trigger_soft_alert();
-        log_threat_event("SOFT_SECONDARY_FACE_DETECTED", result.secondary_gaze_duration_sec, result.faces.size(), result.secondary_liveness_verified);
+        threat_name = "SOFT_SECONDARY_FACE_DETECTED";
+        dur = result.secondary_gaze_duration_sec;
+        new_threat_state = threat_name;
     } else {
         clear_alerts();
+        new_threat_state = "CLEARED";
     }
+
+    // Deduplicate audit logging: Log only on state transitions (activation, escalation, deactivation)
+    if (new_threat_state != current_threat_state_) {
+        if (new_threat_state != "CLEARED") {
+            std::string transition = (current_threat_state_ == "CLEARED") ? "_ACTIVATED" : "_ESCALATED";
+            log_threat_event(new_threat_state + transition, dur, result.faces.size(), result.secondary_liveness_verified);
+        } else {
+            log_threat_event(current_threat_state_ + "_DEACTIVATED", 0.0, result.faces.size(), false);
+        }
+        current_threat_state_ = new_threat_state;
+    }
+
     pump_events();
 }
 

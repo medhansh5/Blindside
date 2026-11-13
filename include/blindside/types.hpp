@@ -55,7 +55,8 @@ struct HeadPose {
 struct FaceDetectionResult {
     FaceBox box;
     HeadPose pose;
-    float ear = 0.30f;              // Eye Aspect Ratio
+    float facial_aspect_ratio = 0.30f; // 5-point geometric proxy (vertical eye-to-nose ratio)
+    float ear = 0.30f;                 // Backward-compatible alias
     bool is_primary_user = false;
     bool is_eavesdropper = false;
     bool is_live_threat = false;     // Passes Liveness micro-motion check
@@ -67,6 +68,8 @@ struct FrameResult {
     std::chrono::system_clock::time_point timestamp;
     DaemonState daemon_state = DaemonState::GracefulTargetedBlur;
     bool primary_user_present = false;
+    bool primary_absence_triggered = false;
+    double primary_absence_duration_sec = 0.0;
     std::vector<FaceDetectionResult> faces;
     bool secondary_gaze_detected = false;
     bool secondary_liveness_verified = false;

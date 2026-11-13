@@ -70,12 +70,14 @@ public:
     bool is_hard_defense_active() const { return hard_defense_active_; }
     bool is_soft_alert_active() const { return soft_alert_active_; }
     bool is_targeted_blur_active() const { return targeted_blur_active_; }
+    std::string get_current_threat_state() const { return current_threat_state_; }
 
 private:
     Config config_;
     bool soft_alert_active_ = false;
     bool hard_defense_active_ = false;
     bool targeted_blur_active_ = false;
+    std::string current_threat_state_ = "CLEARED";
     std::ofstream log_stream_;
 
     std::unique_ptr<PlatformManager> platform_manager_;

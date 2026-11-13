@@ -36,15 +36,24 @@ struct Config {
     double max_allowed_pitch_deg = 25.0; // Pitch angle relative to screen center
     double hysteresis_sec = 1.0;         // Secondary gaze must persist > 1s for Hard Defense
 
-    // Liveness & Anti-Spoofing Parameters
-    float ear_blink_threshold = 0.20f;              // Eye Aspect Ratio drop threshold for blink
-    double liveness_window_sec = 3.0;               // Time window to verify micro-motion/blink
+    // Liveness & Anti-Spoofing Parameters (5-Point Geometric Proxy)
+    // YuNet outputs 5 landmark points (eyes, nose, mouth corners) without eyelid contours.
+    // This is a geometric facial aspect ratio (FAR) proxy (interocular vs eye-to-nose vertical distance),
+    // not anatomical eyelid aperture EAR. Anti-spoofing relies primarily on 3D head pose micro-motion.
+    float facial_aspect_ratio_threshold = 0.20f;
+    float ear_blink_threshold = 0.20f;               // Backward-compatible alias
+    double liveness_window_sec = 3.0;                // Time window to verify micro-motion variance
     float micro_pose_variance_threshold = 0.80f;     // Pitch/Yaw variance threshold for live face vs photo
 
     // Primary User Calibration Box (normalized [0, 1])
     float primary_x_center = 0.5f;
     float primary_y_center = 0.5f;
     float primary_box_tolerance = 0.35f; // Distance threshold for primary vs eavesdropper
+
+    // Primary User Absence Defense (THREAT-03)
+    bool enable_primary_absence_defense = true;
+    double primary_absence_timeout_sec = 5.0; // Sustained absence duration before triggering
+    double primary_recovery_dwell_sec = 0.5;  // Sustained return duration before clearing
 
     // Trigger behavior
     TriggerMode trigger_mode = TriggerMode::Both;

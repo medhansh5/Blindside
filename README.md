@@ -40,7 +40,10 @@ Blindside is built on a strict privacy model:
 - **True 6D Head Pose Estimation**: Computes spatial pitch, yaw, and roll using `cv::solvePnP` against an anthropometric 3D face model—no naive 2D bounding-box heuristics.
 - **Spatial Gaze Bounds**: Filters out people who happen to walk behind you; triggers only when a secondary face looks directly at your screen ($\pm 30^\circ$ yaw, $\pm 25^\circ$ pitch).
 - **Hysteresis Temporal Filtering**: Enforces a configurable dwell timer (default: `1.0s`) to eliminate false alarms from transient passersby.
-- **Rotational Micro-Motion & Blink Liveness**: Evaluates involuntary micro-movement variance and Eye Aspect Ratio (EAR) variations over rolling time windows to reject static photo spoofs.
+- **Per-Track Rotational Micro-Motion & FAR Proxy Liveness**: Evaluates involuntary pitch/yaw micro-movement variance and geometric Facial Aspect Ratio (FAR) deformation proxies independently per secondary face track over rolling time windows to reject static photo spoofs.
+- **Primary User Absence Defense (THREAT-03)**: Automatically detects primary user departure from calibrated screen bounds and triggers screen locking or workspace redaction after a configurable timeout with recovery dwell protection.
+- **Synthetic Eavesdropper Injection**: Deterministic synthetic camera simulation enables comprehensive CI pipeline testing of detection, solvePnP pose estimation, liveness, and threat triggering without physical hardware webcams.
+- **Deduplicated Transition Audit Logging**: Writes structured security audit events on activation, escalation, and deactivation transitions rather than spamming every frame.
 - **Native Screen Redaction**: Spawns an instant, click-through, non-activating redaction mask over your active workspace window on supported platforms.
 - **Discrete Platform Capability Diagnostics**: Transparently reports native OS capabilities without misrepresenting platform features.
 - **Zero-Allocation Core Loop**: Fixed-capacity ring buffers ensure frame cycles run with predictable memory behavior.
@@ -81,12 +84,11 @@ cd Blindside
 
 ### 2. Install Dependencies
 
-#### Linux (Ubuntu 26.04+ / Debian with OpenCV 4.10+)
+#### Linux (Ubuntu 24.04 LTS+ / Debian)
 ```bash
 sudo apt-get update
 sudo apt-get install -y cmake ninja-build build-essential pkg-config \
-    libopencv-core4.10 libopencv-videoio4.10 libopencv-objdetect4.10 \
-    libopencv-imgproc4.10 libopencv-calib3d4.10 libx11-dev libxext-dev
+    libopencv-dev libx11-dev libxext-dev
 ```
 
 #### Windows
@@ -176,7 +178,7 @@ Face Detection (OpenCV YuNet ONNX, 5 facial landmarks)
      ↓
 Face Tracking (Primary user calibration & temporal identity)
      ↓
-Liveness Verification (Micro-motion variance & Eye Aspect Ratio)
+Liveness Verification (Per-track micro-motion variance & FAR geometric proxy)
      ↓
 Threat Assessment (Spatial gaze bounds & hysteresis dwell timers)
      ↓
@@ -235,7 +237,7 @@ python tools/reference/test_blindside.py
 ```bash
 ctest --test-dir build --output-on-failure
 ```
-The native test suite includes `test_platform.cpp`, validating 10 platform contracts: capability detection, overlay lifecycles, idempotent repositioning, clean deactivation, unsupported fallbacks, invalid geometries, negative multi-monitor offsets, headless resilience, threat/platform separation, and state immutability.
+The native test suite includes `test_platform.cpp`, validating 11 platform contracts: capability detection, overlay lifecycles, idempotent repositioning, clean deactivation, unsupported fallbacks, invalid geometries, negative multi-monitor offsets, headless resilience, threat/platform separation, state immutability, and audit log transition deduplication.
 
 *(Note: Native CTest execution requires a configured local C++ toolchain).*
 
@@ -246,7 +248,7 @@ For full testing procedures, see [docs/TESTING.md](docs/TESTING.md).
 ## 🛠️ Development
 
 - **Language Standard**: ISO C++20 (`std::array`, designated initializers, concepts).
-- **Core Library**: OpenCV 4.10+ (core, imgproc, videoio, highgui, objdetect, calib3d).
+- **Core Library**: OpenCV 4.6+ / 4.10+ (core, imgproc, videoio, highgui, objdetect, calib3d).
 - **Architecture Principle**: Keep platform-specific code strictly contained within `src/platform/`. Never introduce threat classification logic into platform managers.
 
 For release history and roadmap, see [RELEASE_NOTES.md](RELEASE_NOTES.md) and [CHANGELOG.md](CHANGELOG.md).

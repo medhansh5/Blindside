@@ -26,7 +26,7 @@ Camera Sensor
 │                     FaceTracker (Temporal Identity)         │
 │                            │                                │
 │                            ▼                                │
-│                     LivenessEngine (Micro-motion / EAR)     │
+│              LivenessEngine (Per-Track Micro-motion / FAR)  │
 │                            │                                │
 │                            ▼                                │
 │                     ThreatEngine (Spatial Gaze / Dwell)     │
@@ -88,18 +88,33 @@ Camera Sensor
 
 ### Liveness Verification
 - Distinguishes physical human presence from static photographic spoofing (e.g. photos, printed posters, or digital portraits).
-- Uses a rolling fixed circular buffer of recent pose observations to evaluate:
-  1. **Rotational Micro-motion**: Evaluates pitch and yaw variance over time. A live subject displays natural involuntary micro-movements, whereas a static photo exhibits near-zero angular variance.
-  2. **Eye Aspect Ratio (EAR)**: Computes eye openness ratios. Variations confirm natural blink activity.
-- Tracks lacking sufficient motion variance or blink evidence are marked as `SpoofStatic`.
+- **Per-Track History Isolation**: Rolling 45-sample fixed histories (`SecondaryFaceTrack::pose_history`) are isolated strictly per secondary track ID. Micro-motion variance from one person never contaminates or alters another subject's spoof classification.
+- Evaluates two primary signals over a rolling time window (`config.liveness_window_sec`):
+  1. **Rotational Micro-motion**: Evaluates pitch and yaw angular variance over time. Physical subjects naturally display involuntary micro-movements (variance $\ge 0.02$), whereas static photographs exhibit near-zero angular variance.
+  2. **Geometric Facial Aspect Ratio (FAR) Proxy**: Evaluates vertical deformation ratios between eye centers and nose tip relative to interocular distance:
+     $$\text{FAR} = \frac{|y_{\text{nose}} - y_{\text{eye\_center}}|}{1.8 \cdot d_{\text{interocular}}}$$
+     > [!IMPORTANT]
+     > **No Physiological Blink Claims**: YuNet outputs 5 facial points (2 eye centroids, nose tip, 2 mouth corners) without eyelid contours. FAR is an anthropometric geometric deformation proxy, not an anatomical palpebral fissure Eye Aspect Ratio (EAR). Blindside relies primarily on 3D head pose angular micro-motion for anti-spoofing and does not claim genuine physiological blink detection.
+- Tracks exhibiting insufficient motion variance and unchanging facial aspect ratio are marked as `is_spoof_static = true` and suppressed from escalating to hard lock.
+
+### Primary User Absence Defense (THREAT-03)
+- Continuously monitors primary user presence against the calibrated baseline bounding box.
+- **Configurable Absence Timeout**: Brief occlusions or single frame drops do not disrupt the session. Primary departure must persist beyond `config.primary_absence_timeout_sec` (default: `5.0s`) before elevating to active defense.
+- **Return Recovery Dwell**: When returning from absence, the primary user must maintain continuous presence for `config.primary_recovery_dwell_sec` (default: `0.5s`) before clearing defenses, preventing window flicker.
+- **Camera Failure & Disconnect Isolation**: If camera capture returns corrupt or empty frames, absence tracking is paused to avoid false locks. However, if absence defense was already active when disconnection occurred, the lock state is safely preserved.
 
 ### Threat Assessment
 - Evaluates persistent secondary gaze directed at the user's display.
 - **Hysteresis Window**: Transient glances or passersby do not trigger disruption. A secondary face must maintain a sustained gaze toward the screen exceeding the hysteresis threshold (default: `1.0s` via `config.hysteresis_sec`).
 - Elevation levels:
-  - **Benign**: Primary user or secondary face looking away.
+  - **Benign**: Primary user present; secondary faces looking away.
   - **Candidate**: Secondary gaze directed at screen, but within hysteresis threshold ($< 1.0\text{s}$). Triggers advisory soft alerts.
   - **Active Eavesdropper**: Confirmed secondary gaze holding $> 1.0\text{s}$. Triggers hard privacy responses (workspace redaction or session lock).
+  - **Absent Primary User**: Confirmed primary user absence exceeding timeout threshold. Triggers configured defense state (workspace redaction or session lock).
+
+### Synthetic Eavesdropper Injection
+- Built-in deterministic synthetic frame simulation in `CameraCapture` (`--synthetic`) generates valid synthetic face fixtures with anthropometric landmarks and realistic micro-movement jitter.
+- Exercises the complete downstream pipeline (`detect` $\to$ `solvePnP` $\to$ `calibrate` $\to$ `liveness` $\to$ `hysteresis` $\to$ `defense`) without hardware webcams or physical ONNX model files on disk.
 
 ---
 
@@ -185,8 +200,9 @@ Blindside logs structured security alerts for compliance reporting (NIST SP 800-
 - File: `blindside_threats.log`
 - Format:
   ```text
-  2026-10-04 09:30:15 [AUDIT_ALERT] Threat=TARGETED_WORKSPACE_BLUR GazeDurationSec=1.25 FacesDetected=2 LivenessVerified=1 Control=NIST_SP_800_53_PE_3
+  2026-11-13 20:30:15 [AUDIT_ALERT] Threat=HARD_WORKSTATION_LOCK_ACTIVATED GazeDurationSec=1.25 FacesDetected=2 LivenessVerified=1 Control=NIST_SP_800_53_PE_3
   ```
+- **Transition-Based Deduplication**: Logging is triggered on state transitions (`_ACTIVATED`, `_ESCALATED`, `_DEACTIVATED`) rather than on every frame, eliminating 30 Hz disk spam during prolonged active threats.
 - **Privacy Assurance**: The log records *events and measurements* (gaze duration, face count, verification flags). It **never** writes image buffers, facial biometric vectors, or identity identifiers.
 
 ---
@@ -194,6 +210,8 @@ Blindside logs structured security alerts for compliance reporting (NIST SP 800-
 ## 7. Testing & Verification Architecture
 
 Blindside employs strict isolation between test tiers:
-- **Platform Hardening Suite (`tests/test_platform.cpp`)**: Verifies 10 platform contracts (capability detection, overlay lifecycle, idempotent resizing, cleanup, unsupported fallbacks, invalid geometry, multi-monitor negative coordinates, resilience, and threat engine decoupling).
-- **Pipeline & Math Tests**: Dedicated tests for ring buffers, gaze math, solver stability, and synthetic camera failure recovery.
+- **Platform Hardening Suite (`tests/test_platform.cpp`)**: Verifies 11 platform contracts (capability detection, overlay lifecycle, idempotent resizing, cleanup, unsupported fallbacks, invalid geometry, multi-monitor negative coordinates, resilience, threat engine decoupling, state immutability, and audit log transition deduplication).
+- **Synthetic Pipeline Suite (`tests/test_pipeline.cpp`)**: End-to-end integration test validating synthetic camera injection, solvePnP pose estimation, primary user calibration, eavesdropper elevation, and recovery.
+- **Detector & Liveness Suites (`tests/test_eavesdropper.cpp`, `tests/test_liveness.cpp`)**: Unit tests validating per-track multi-face liveness isolation, photo spoof rejection, primary absence lifecycle, and geometric FAR proxy calculation.
+- **Pipeline & Math Tests**: Dedicated tests for ring buffers (`test_ring_buffer.cpp`), gaze math (`test_gaze_math.cpp`), and camera failure handling (`test_camera_failure.cpp`).
 - **Python Reference Suite (`tools/reference/test_blindside.py`)**: Independent algorithmic reference test suite validating synthetic camera fallback, gaze hysteresis, calibration, gaze vectors, and liveness.

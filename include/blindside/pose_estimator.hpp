@@ -21,7 +21,15 @@ public:
     HeadPose estimate_pose(const FaceBox& face, const RawFrame& frame);
 
     /**
-     * @brief Calculates Eye Aspect Ratio (EAR) for blink & liveness detection.
+     * @brief Computes 5-point geometric facial aspect ratio (FAR) proxy:
+     *        |nose.y - eye_center.y| / (1.8 * interocular_distance).
+     * @note YuNet outputs 5 landmarks without eyelid contours; this is a geometric
+     *       vertical deformation proxy rather than an anatomical palpebral fissure EAR.
+     */
+    static float compute_facial_aspect_ratio(const FaceBox& face);
+
+    /**
+     * @brief Backward-compatible alias for compute_facial_aspect_ratio.
      */
     static float compute_ear(const FaceBox& face);
 

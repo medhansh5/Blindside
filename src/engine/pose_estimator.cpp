@@ -9,7 +9,7 @@ constexpr double M_PI_VAL = 3.14159265358979323846;
 
 PoseEstimator::PoseEstimator(const Config& config) : config_(config) {}
 
-float PoseEstimator::compute_ear(const FaceBox& face) {
+float PoseEstimator::compute_facial_aspect_ratio(const FaceBox& face) {
     const auto& eye_r = face.landmarks[0];
     const auto& eye_l = face.landmarks[1];
     const auto& nose  = face.landmarks[2];
@@ -23,8 +23,13 @@ float PoseEstimator::compute_ear(const FaceBox& face) {
     float eye_center_y = (eye_r.y + eye_l.y) * 0.5f;
     float nose_dist_v = std::abs(nose.y - eye_center_y);
 
-    float ear = (nose_dist_v > 0.001f) ? (nose_dist_v / (1.8f * interocular_dist)) : 0.30f;
-    return std::clamp(ear, 0.05f, 0.45f);
+    // 5-point geometric facial aspect ratio proxy: vertical eye-to-nose vs interocular distance
+    float far = (nose_dist_v > 0.001f) ? (nose_dist_v / (1.8f * interocular_dist)) : 0.30f;
+    return std::clamp(far, 0.05f, 0.45f);
+}
+
+float PoseEstimator::compute_ear(const FaceBox& face) {
+    return compute_facial_aspect_ratio(face);
 }
 
 Point3f PoseEstimator::compute_gaze_vector(double pitch_deg, double yaw_deg) {
