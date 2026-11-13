@@ -25,9 +25,14 @@ bool Daemon::initialize() {
         return false;
     }
 
-    if (!face_detector_.initialize()) {
-        std::cerr << "[Daemon] Failed to initialize face detector engine." << std::endl;
-        return false;
+    std::string model = config_.model_path.empty() ? "models/face_detection_yunet_2023mar.onnx" : config_.model_path;
+    if (!face_detector_.initialize(model)) {
+        if (!camera_.is_synthetic_mode()) {
+            std::cerr << "[Daemon] Failed to initialize face detector engine." << std::endl;
+            return false;
+        } else {
+            std::cout << "[Daemon] Model unavailable for YuNet; face detector running in synthetic simulation mode." << std::endl;
+        }
     }
 
     if (!privacy_trigger_.initialize()) {
@@ -123,12 +128,11 @@ void Daemon::worker_loop(std::stop_token stop_token) {
             continue;
         }
 
-        config_.daemon_state = current_state;
         const RawFrame& frame = opt_frame.value();
         
         FrameResult result;
         try {
-            result = eavesdropper_detector_.process_frame(frame);
+            result = eavesdropper_detector_.process_frame(frame, current_state);
         } catch (const std::exception& e) {
             std::cerr << "[Daemon] Exception during frame processing: " << e.what() << std::endl;
             continue; // Skip triggering and rate changes on bad frame

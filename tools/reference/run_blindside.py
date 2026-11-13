@@ -6,8 +6,6 @@ and offline testing. See tools/reference/README.md for architectural separation 
 """
 
 import argparse
-import ctypes
-import ctypes.wintypes
 import math
 import os
 import sys
@@ -17,6 +15,10 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
+
+if sys.platform == "win32":
+    import ctypes
+    import ctypes.wintypes
 
 import cv2
 import numpy as np
@@ -512,20 +514,55 @@ class EavesdropperDetector:
         return result
 
 # ==============================================================================
-# Platform Manager: Native Windows Reference Prototype (ctypes)
-# (prototype matching src/platform/windows.cpp)
+# Platform Manager: Native / Reference Prototypes
+# (matching src/platform/)
 # ==============================================================================
 
-class WindowsPlatformManager:
-    def __init__(self):
-        self.user32 = ctypes.windll.user32
-        self.dwmapi = ctypes.windll.dwmapi
-        self.overlay_hwnd = None
-
+class PlatformManagerBase:
     def initialize(self) -> bool:
         return True
 
     def get_diagnostics(self) -> PlatformDiagnostics:
+        return PlatformDiagnostics(
+            os_name="Generic (Reference Prototype)",
+            supports_native_redaction=False,
+            supports_screen_lock=True,
+            supports_desktop_notifications=True,
+            monitor_count=1
+        )
+
+    def get_active_window_geometry(self) -> WindowRect:
+        return WindowRect(x=100, y=100, width=1280, height=800, valid=True)
+
+    def trigger_targeted_blur(self, rect: WindowRect):
+        pass
+
+    def trigger_soft_alert(self, message: str):
+        pass
+
+    def trigger_hard_defense(self, message: str):
+        pass
+
+    def clear_alerts(self):
+        pass
+
+
+class WindowsPlatformManager(PlatformManagerBase):
+    def __init__(self):
+        if sys.platform == "win32":
+            self.user32 = ctypes.windll.user32
+            self.dwmapi = ctypes.windll.dwmapi
+        else:
+            self.user32 = None
+            self.dwmapi = None
+        self.overlay_hwnd = None
+
+    def initialize(self) -> bool:
+        return sys.platform == "win32"
+
+    def get_diagnostics(self) -> PlatformDiagnostics:
+        if not self.user32:
+            return super().get_diagnostics()
         monitors = self.user32.GetSystemMetrics(80) # SM_CMONITORS
         return PlatformDiagnostics(
             os_name="Windows (Reference Prototype)",
@@ -536,6 +573,8 @@ class WindowsPlatformManager:
         )
 
     def get_active_window_geometry(self) -> WindowRect:
+        if not self.user32:
+            return super().get_active_window_geometry()
         hwnd = self.user32.GetForegroundWindow()
         if hwnd:
             rect = ctypes.wintypes.RECT()
@@ -550,6 +589,8 @@ class WindowsPlatformManager:
         return WindowRect(x=100, y=100, width=1280, height=800, valid=True)
 
     def trigger_targeted_blur(self, rect: WindowRect):
+        if not self.user32:
+            return
         WS_EX_LAYERED = 0x00080000
         WS_EX_TRANSPARENT = 0x00000020
         WS_EX_TOPMOST = 0x00000008
@@ -574,15 +615,24 @@ class WindowsPlatformManager:
             )
 
     def trigger_soft_alert(self, message: str):
-        self.user32.MessageBeep(0x00000030)  # MB_ICONWARNING
+        if self.user32:
+            self.user32.MessageBeep(0x00000030)  # MB_ICONWARNING
 
     def trigger_hard_defense(self, message: str):
-        self.user32.LockWorkStation()
+        if self.user32:
+            self.user32.LockWorkStation()
 
     def clear_alerts(self):
-        if self.overlay_hwnd:
+        if self.user32 and self.overlay_hwnd:
             self.user32.DestroyWindow(self.overlay_hwnd)
             self.overlay_hwnd = None
+
+
+def create_platform_manager() -> PlatformManagerBase:
+    if sys.platform == "win32":
+        return WindowsPlatformManager()
+    return PlatformManagerBase()
+
 
 # ==============================================================================
 # Privacy Trigger Manager (matching src/trigger/privacy_trigger.cpp)
@@ -591,7 +641,7 @@ class WindowsPlatformManager:
 class PrivacyTriggerManager:
     def __init__(self, config: Config):
         self.config = config
-        self.platform = WindowsPlatformManager()
+        self.platform = create_platform_manager()
         self.soft_alert_active = False
         self.hard_defense_active = False
         self.targeted_blur_active = False
@@ -717,7 +767,7 @@ class Daemon:
 # ==============================================================================
 
 def print_diagnostics():
-    platform = WindowsPlatformManager()
+    platform = create_platform_manager()
     diag = platform.get_diagnostics()
     print("Blindside diagnostics (Python Reference Harness)")
     print("────────────────────────────────────────────────")

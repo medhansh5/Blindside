@@ -14,7 +14,7 @@ jobs:
     name: Linux X11 Build & Tests
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:26.04
+      image: ubuntu:24.04
     steps:
       - name: Install git for checkout
         run: apt-get update && apt-get install -y git
@@ -89,12 +89,12 @@ jobs:
           cp -r models build/Release/
           cp LICENSE build/Release/
           cat << 'EOF' > build/Release/README.txt
-          Blindside V3
+          Blindside V4
           
           Requirements:
           - Linux x64 (X11 or Wayland)
           - OpenCV and X11 libraries:
-            sudo apt-get install libopencv-core4.10 libopencv-videoio4.10 libopencv-objdetect4.10 libopencv-imgproc4.10 libopencv-calib3d4.10
+            sudo apt-get install libopencv-dev libx11-6 libxext6
           - webcam for live detection
           
           Run:
@@ -110,7 +110,7 @@ jobs:
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Blindside-V3-Linux-x64
+          name: Blindside-V4-Linux-x64
           path: |
             build/Release/blindside_daemon
             build/Release/models/
@@ -132,7 +132,8 @@ jobs:
       - name: Download test fixture (YuNet model)
         run: |
           mkdir models
-          curl -L "https://github.com/opencv/opencv_zoo/raw/master/models/face_detection_yunet/face_detection_yunet_2023mar.onnx" -o models/face_detection_yunet_2023mar.onnx
+          curl -L "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx" -o models/face_detection_yunet_2023mar.onnx
+          if (!(Test-Path models/face_detection_yunet_2023mar.onnx) -or (Get-Item models/face_detection_yunet_2023mar.onnx).Length -lt 100000) { throw "Model download failed or file empty" }
           
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="C:\tools\opencv\build"
@@ -147,7 +148,7 @@ jobs:
       - name: Prepare Release Artifact
         run: |
           $readme = @"
-          Blindside V3
+          Blindside V4
 
           Requirements:
           - Windows x64
@@ -175,7 +176,7 @@ jobs:
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Blindside-V3-Windows-x64
+          name: Blindside-V4-Windows-x64
           path: |
             build/Release/blindside_daemon.exe
             build/Release/*.dll

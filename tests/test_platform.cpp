@@ -5,6 +5,9 @@
 #include <cassert>
 #include <iostream>
 #include <string>
+#include <vector>
+#include <fstream>
+#include <cstdio>
 
 using namespace blindside;
 
@@ -40,7 +43,13 @@ void test_platform_capability_detection() {
     assert(diag.os_name == "Linux (X11)");
     assert(caps.session_lock == true);
     assert(caps.click_through_overlay == false);
-    assert(diag.redaction_mode.find("OpaqueRedaction") != std::string::npos);
+    if (caps.screen_redaction) {
+        assert(diag.redaction_mode.find("OpaqueRedaction") != std::string::npos);
+        assert(caps.multi_monitor_aware == true);
+    } else {
+        assert(diag.redaction_mode.find("None") != std::string::npos);
+        assert(caps.multi_monitor_aware == false);
+    }
 #else
     // Wayland or generic
     assert(caps.session_lock == true);
@@ -286,6 +295,66 @@ void test_platform_response_does_not_modify_threat_engine() {
     std::cout << "[PASS] test_platform_response_does_not_modify_threat_engine" << std::endl;
 }
 
+void test_audit_log_deduplication() {
+    Config config;
+    config.enable_screen_lock = false; // Don't trigger actual OS lock in unit test
+    config.log_file_path = "test_dedup_threats.log";
+    std::remove("test_dedup_threats.log");
+
+    PrivacyTriggerManager trigger_mgr(config);
+    assert(trigger_mgr.initialize());
+
+    FrameResult soft_frame;
+    soft_frame.trigger_soft_alert = true;
+    soft_frame.secondary_gaze_duration_sec = 0.2;
+
+    // Send 10 identical consecutive soft alert frames
+    for (int i = 0; i < 10; ++i) {
+        trigger_mgr.execute_triggers(soft_frame);
+    }
+    assert(trigger_mgr.get_current_threat_state() == "SOFT_SECONDARY_FACE_DETECTED");
+
+    // Escalate to hard defense for 10 frames
+    FrameResult hard_frame;
+    hard_frame.trigger_hard_defense = true;
+    hard_frame.secondary_gaze_duration_sec = 1.2;
+    for (int i = 0; i < 10; ++i) {
+        trigger_mgr.execute_triggers(hard_frame);
+    }
+    assert(trigger_mgr.get_current_threat_state() == "HARD_WORKSTATION_LOCK");
+
+    // Clear / calm state for 10 frames
+    FrameResult calm_frame;
+    for (int i = 0; i < 10; ++i) {
+        trigger_mgr.execute_triggers(calm_frame);
+    }
+    assert(trigger_mgr.get_current_threat_state() == "CLEARED");
+
+    // Inspect the generated audit log file
+    std::ifstream log_file("test_dedup_threats.log");
+    assert(log_file.is_open());
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(log_file, line)) {
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+    log_file.close();
+    std::remove("test_dedup_threats.log");
+
+    // Exactly 3 state-transition log entries should exist:
+    // 1. SOFT_SECONDARY_FACE_DETECTED_ACTIVATED
+    // 2. HARD_WORKSTATION_LOCK_ESCALATED
+    // 3. HARD_WORKSTATION_LOCK_DEACTIVATED
+    assert(lines.size() == 3);
+    assert(lines[0].find("SOFT_SECONDARY_FACE_DETECTED_ACTIVATED") != std::string::npos);
+    assert(lines[1].find("HARD_WORKSTATION_LOCK_ESCALATED") != std::string::npos);
+    assert(lines[2].find("HARD_WORKSTATION_LOCK_DEACTIVATED") != std::string::npos);
+
+    std::cout << "[PASS] test_audit_log_deduplication (logged 3 transitions out of 30 frames)" << std::endl;
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << " Running Blindside V4 Platform Tests   " << std::endl;
@@ -301,9 +370,10 @@ int main() {
     test_platform_resilience_and_graceful_recovery();
     test_threat_independent_from_platform();
     test_platform_response_does_not_modify_threat_engine();
+    test_audit_log_deduplication();
 
     std::cout << "========================================" << std::endl;
-    std::cout << " ALL 10 PLATFORM TESTS PASSED (10/10)   " << std::endl;
+    std::cout << " ALL 11 PLATFORM TESTS PASSED (11/11)   " << std::endl;
     std::cout << "========================================" << std::endl;
 
     return 0;

@@ -21,8 +21,8 @@ public:
     bool initialize() override {
         display_ = XOpenDisplay(nullptr);
         if (!display_) {
-            std::cerr << "[Platform] Failed to connect to X11 display." << std::endl;
-            return false;
+            std::cerr << "[Platform] X11 display connection unavailable (headless or non-GUI environment). Falling back to non-visual responses." << std::endl;
+            return true;
         }
         return true;
     }
@@ -33,7 +33,7 @@ public:
         caps.targeted_blur = false; // X11 override-redirect window provides opaque redaction, not compositor blur
         caps.session_lock = true;   // via loginctl/xset/dbus-screensaver
         caps.click_through_overlay = false; // Standard X11 override-redirect blocks pointer events without XShape
-        caps.multi_monitor_aware = true;    // X11 ScreenCount / multi-head coordinates
+        caps.multi_monitor_aware = (display_ != nullptr);
         return caps;
     }
 
@@ -47,7 +47,7 @@ public:
         diag.supports_click_through = false;
         // Note: ScreenCount() reports X11 screens; modern multi-head RandR setups map displays into Screen 0
         diag.monitor_count = display_ ? ScreenCount(display_) : 1;
-        diag.redaction_mode = "OpaqueRedaction (X11 Override-Redirect)";
+        diag.redaction_mode = display_ ? "OpaqueRedaction (X11 Override-Redirect)" : "None (Headless Fallback)";
         diag.capabilities = get_capabilities();
         return diag;
     }

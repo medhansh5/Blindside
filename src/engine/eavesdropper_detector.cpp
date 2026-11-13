@@ -50,6 +50,7 @@ bool EavesdropperDetector::calibrate(const RawFrame& frame) {
     }
 
     calibrated_ = true;
+    reset_absence_state();
     std::cout << "[EavesdropperDetector] Primary user registered at normalized center [" 
               << primary_calibration_box_.center_x() << ", " << primary_calibration_box_.center_y() << "]" << std::endl;
     return true;
@@ -57,37 +58,45 @@ bool EavesdropperDetector::calibrate(const RawFrame& frame) {
 
 void EavesdropperDetector::reset_trigger_state() {
     secondary_gaze_active_ = false;
-    // We intentionally DO NOT clear history_count_ or history_head_.
+    // We intentionally DO NOT clear track liveness history here.
     // Liveness evidence naturally expires via timestamps.
 }
 
-bool EavesdropperDetector::evaluate_liveness(double current_pitch, double current_yaw, float current_ear, bool& is_spoof_photo) {
+void EavesdropperDetector::reset_absence_state() {
+    primary_absence_active_ = false;
+    primary_absence_timer_running_ = false;
+    primary_last_seen_time_ = std::chrono::system_clock::now();
+    primary_return_in_progress_ = false;
+}
+
+bool SecondaryFaceTrack::evaluate_liveness(double current_pitch, double current_yaw, float current_aspect_ratio,
+                                           double liveness_window_sec, float aspect_ratio_threshold, bool& is_spoof_photo) {
     auto now = std::chrono::system_clock::now();
 
-    // Push new sample into zero-allocation rolling buffer
-    pose_history_[history_head_] = {now, current_pitch, current_yaw, current_ear, true};
-    history_head_ = (history_head_ + 1) % HISTORY_CAPACITY;
-    if (history_count_ < HISTORY_CAPACITY) history_count_++;
+    // Push new sample into per-track zero-allocation rolling buffer
+    pose_history[history_head] = {now, current_pitch, current_yaw, current_aspect_ratio, current_aspect_ratio, true};
+    history_head = (history_head + 1) % TRACK_HISTORY_CAPACITY;
+    if (history_count < TRACK_HISTORY_CAPACITY) history_count++;
 
-    if (history_count_ < 4) {
+    if (history_count < 4) {
         is_spoof_photo = false;
         return true; // Default to live threat until enough samples gathered
     }
 
-    // Calculate variance of pitch, yaw, and min EAR over last 3 seconds
+    // Calculate variance of pitch, yaw, and min facial aspect ratio over liveness window
     double mean_pitch = 0.0;
     double mean_yaw = 0.0;
-    float min_ear = 1.0f;
+    float min_aspect_ratio = 1.0f;
     size_t valid_samples = 0;
 
-    for (size_t i = 0; i < history_count_; ++i) {
-        const auto& s = pose_history_[i];
+    for (size_t i = 0; i < history_count; ++i) {
+        const auto& s = pose_history[i];
         if (!s.valid) continue;
         std::chrono::duration<double> dt = now - s.timestamp;
-        if (dt.count() <= config_.liveness_window_sec) {
+        if (dt.count() <= liveness_window_sec) {
             mean_pitch += s.pitch;
             mean_yaw += s.yaw;
-            if (s.ear < min_ear) min_ear = s.ear;
+            if (s.facial_aspect_ratio < min_aspect_ratio) min_aspect_ratio = s.facial_aspect_ratio;
             valid_samples++;
         }
     }
@@ -103,11 +112,11 @@ bool EavesdropperDetector::evaluate_liveness(double current_pitch, double curren
     double var_pitch = 0.0;
     double var_yaw = 0.0;
 
-    for (size_t i = 0; i < history_count_; ++i) {
-        const auto& s = pose_history_[i];
+    for (size_t i = 0; i < history_count; ++i) {
+        const auto& s = pose_history[i];
         if (!s.valid) continue;
         std::chrono::duration<double> dt = now - s.timestamp;
-        if (dt.count() <= config_.liveness_window_sec) {
+        if (dt.count() <= liveness_window_sec) {
             var_pitch += (s.pitch - mean_pitch) * (s.pitch - mean_pitch);
             var_yaw += (s.yaw - mean_yaw) * (s.yaw - mean_yaw);
         }
@@ -119,8 +128,8 @@ bool EavesdropperDetector::evaluate_liveness(double current_pitch, double curren
     double total_variance = var_pitch + var_yaw;
 
     // Anti-Spoofing Rules:
-    // If total variance is near zero AND eye aspect ratio exhibits no blink variation -> Static Photo / Spoof
-    if (total_variance < 0.02 && min_ear > config_.ear_blink_threshold) {
+    // If total head pose angular variance is near zero AND geometric facial aspect ratio shows no deformation -> Static Photo / Spoof
+    if (total_variance < 0.02 && min_aspect_ratio > aspect_ratio_threshold) {
         is_spoof_photo = true;
         return false;
     }
@@ -151,7 +160,7 @@ bool EavesdropperDetector::is_valid_face_box(const FaceBox& box, int frame_width
     return true;
 }
 
-bool EavesdropperDetector::update_and_validate_secondary_track(const FaceBox& box, int frame_width, int frame_height, std::chrono::system_clock::time_point now) {
+SecondaryFaceTrack* EavesdropperDetector::update_and_validate_secondary_track(const FaceBox& box, int frame_width, int frame_height, std::chrono::system_clock::time_point now) {
     float fw = static_cast<float>(frame_width > 0 ? frame_width : 640);
     float fh = static_cast<float>(frame_height > 0 ? frame_height : 480);
 
@@ -181,7 +190,7 @@ bool EavesdropperDetector::update_and_validate_secondary_track(const FaceBox& bo
         match->last_seen = now;
         match->hit_count++;
         match->miss_count = 0;
-        return true;
+        return match;
     } else {
         SecondaryFaceTrack new_track;
         new_track.id = next_track_id_++;
@@ -194,7 +203,7 @@ bool EavesdropperDetector::update_and_validate_secondary_track(const FaceBox& bo
         new_track.hit_count = 1;
         new_track.miss_count = 0;
         secondary_tracks_.push_back(new_track);
-        return true;
+        return &secondary_tracks_.back();
     }
 }
 
@@ -209,11 +218,34 @@ void EavesdropperDetector::prune_secondary_tracks(std::chrono::system_clock::tim
     }
 }
 
-FrameResult EavesdropperDetector::process_frame(const RawFrame& frame) {
+FrameResult EavesdropperDetector::process_frame(const RawFrame& frame, std::optional<DaemonState> active_state) {
     FrameResult result;
     result.frame_id = frame.frame_id;
     result.timestamp = frame.timestamp;
+    DaemonState effective_state = active_state.value_or(config_.daemon_state);
+    result.daemon_state = effective_state;
     auto now = std::chrono::system_clock::now();
+
+    // Safe handling when camera input fails or becomes unavailable
+    bool is_camera_valid = (frame.width > 0 && frame.height > 0) &&
+                           (frame.is_synthetic || !frame.buffer.empty());
+    if (!is_camera_valid) {
+        std::cout << "[DIAGNOSTICS] Camera frame unavailable/invalid; pausing absence tracking to avoid false triggers." << std::endl;
+        reset_trigger_state();
+        // If primary absence defense was ALREADY active, preserve its state so the workstation does not unlock
+        // or drop privacy overlays during brief camera disconnects/reconnects!
+        if (primary_absence_active_) {
+            result.primary_absence_triggered = true;
+            std::chrono::duration<double> total_abs = now - primary_last_seen_time_;
+            result.primary_absence_duration_sec = total_abs.count();
+            if (effective_state == DaemonState::StrictFullLock) {
+                result.trigger_hard_defense = true;
+            } else if (effective_state == DaemonState::GracefulTargetedBlur) {
+                result.trigger_targeted_blur = true;
+            }
+        }
+        return result;
+    }
 
     auto raw_faces = face_detector_.detect(frame);
     
@@ -223,15 +255,6 @@ FrameResult EavesdropperDetector::process_frame(const RawFrame& frame) {
         std::cout << "  [RAW DETECTION " << i << "] Box: [x=" << raw_faces[i].x << ", y=" << raw_faces[i].y 
                   << ", w=" << raw_faces[i].width << ", h=" << raw_faces[i].height 
                   << "] confidence=" << raw_faces[i].confidence << std::endl;
-    }
-
-    if (raw_faces.empty()) {
-        reset_trigger_state();
-        prune_secondary_tracks(now);
-        std::cout << "[DIAGNOSTICS] Validated Primary Face: None (User absent)" << std::endl;
-        std::cout << "[DIAGNOSTICS] Face Count Summary: Total Validated = 0 | Primary = 0 | Secondary = 0 (Raw YuNet Detections = 0)" << std::endl;
-        std::cout << "[DIAGNOSTICS] Liveness Status: INACTIVE (No faces detected)" << std::endl;
-        return result;
     }
 
     int fw = frame.width > 0 ? frame.width : 640;
@@ -249,14 +272,16 @@ FrameResult EavesdropperDetector::process_frame(const RawFrame& frame) {
         }
     }
 
+    bool found_secondary_gaze = false;
+    bool secondary_liveness_pass = false;
+
     if (valid_boxes.empty()) {
         reset_trigger_state();
         prune_secondary_tracks(now);
-        std::cout << "[DIAGNOSTICS] Validated Primary Face: None (Degenerate face boxes filtered)" << std::endl;
+        std::cout << "[DIAGNOSTICS] Validated Primary Face: None (User absent)" << std::endl;
         std::cout << "[DIAGNOSTICS] Face Count Summary: Total Validated = 0 | Primary = 0 | Secondary = 0 (Raw YuNet Detections = " << raw_faces.size() << ")" << std::endl;
-        std::cout << "[DIAGNOSTICS] Liveness Status: INACTIVE (All raw boxes failed sanity checks)" << std::endl;
-        return result;
-    }
+        std::cout << "[DIAGNOSTICS] Liveness Status: INACTIVE (No valid faces detected)" << std::endl;
+    } else {
 
     // Identify Primary User box robustly among valid candidates
     size_t primary_idx = static_cast<size_t>(-1);
@@ -291,7 +316,8 @@ FrameResult EavesdropperDetector::process_frame(const RawFrame& frame) {
         face_res.pose = pose_estimator_.estimate_pose(box, frame);
         
         if (!face_res.pose.valid) continue;
-        face_res.ear = PoseEstimator::compute_ear(box);
+        face_res.facial_aspect_ratio = PoseEstimator::compute_facial_aspect_ratio(box);
+        face_res.ear = face_res.facial_aspect_ratio;
 
         if (i == primary_idx) {
             face_res.is_primary_user = true;
@@ -299,14 +325,16 @@ FrameResult EavesdropperDetector::process_frame(const RawFrame& frame) {
             result.faces.push_back(face_res);
         } else {
             // Secondary candidate: must pass temporal persistence tracking
-            bool validated_track = update_and_validate_secondary_track(box, fw, fh, now);
-            if (!validated_track) continue;
+            SecondaryFaceTrack* track = update_and_validate_secondary_track(box, fw, fh, now);
+            if (!track) continue;
 
             face_res.is_eavesdropper = true;
             if (face_res.pose.is_looking_at_screen) {
                 found_secondary_gaze = true;
                 bool is_spoof = false;
-                bool is_live = evaluate_liveness(face_res.pose.pitch_deg, face_res.pose.yaw_deg, face_res.ear, is_spoof);
+                float far_thresh = (config_.facial_aspect_ratio_threshold != 0.20f) ? config_.facial_aspect_ratio_threshold : config_.ear_blink_threshold;
+                bool is_live = track->evaluate_liveness(face_res.pose.pitch_deg, face_res.pose.yaw_deg, face_res.facial_aspect_ratio,
+                                                        config_.liveness_window_sec, far_thresh, is_spoof);
                 face_res.is_live_threat = is_live;
                 face_res.is_spoof_static = is_spoof;
                 if (is_live && !is_spoof) {
@@ -318,9 +346,6 @@ FrameResult EavesdropperDetector::process_frame(const RawFrame& frame) {
     }
 
     prune_secondary_tracks(now);
-
-    result.secondary_gaze_detected = found_secondary_gaze;
-    result.secondary_liveness_verified = secondary_liveness_pass;
 
     // 2. Log Validated Primary Face Diagnostic
     if (result.primary_user_present && primary_idx < valid_boxes.size()) {
@@ -349,13 +374,17 @@ FrameResult EavesdropperDetector::process_frame(const RawFrame& frame) {
               << " | Secondary Candidates = " << secondary_count 
               << " (Raw YuNet Detections = " << raw_faces.size() << ")" << std::endl;
 
-    // 5. Log Honest Liveness Architecture Limitation
-    std::cout << "[DIAGNOSTICS] Liveness Status: GLOBAL_EVALUATED [Secondary gaze=" 
+    // 5. Log Honest Liveness Architecture Status
+    std::cout << "[DIAGNOSTICS] Liveness Status: PER_TRACK_EVALUATED [Secondary gaze="
               << (found_secondary_gaze ? "detected" : "none")
               << ", liveness_pass=" << (secondary_liveness_pass ? "true" : "false")
-              << "] (Note: Independent per-secondary-track liveness evaluation is pending V3.2 architecture refactor)" << std::endl;
+              << ", active_tracks=" << secondary_tracks_.size() << "]" << std::endl;
+    }
 
-    // Hysteresis Filter (> 1.0 second threshold)
+    result.secondary_gaze_detected = found_secondary_gaze;
+    result.secondary_liveness_verified = secondary_liveness_pass;
+
+    // Hysteresis Filter (> hysteresis_sec threshold)
     if (found_secondary_gaze && secondary_liveness_pass) {
         if (!secondary_gaze_active_) {
             secondary_gaze_active_ = true;
@@ -368,14 +397,69 @@ FrameResult EavesdropperDetector::process_frame(const RawFrame& frame) {
 
         result.trigger_soft_alert = true;
         if (result.secondary_gaze_duration_sec >= config_.hysteresis_sec) {
-            if (config_.daemon_state == DaemonState::StrictFullLock) {
+            if (effective_state == DaemonState::StrictFullLock) {
                 result.trigger_hard_defense = true;
-            } else if (config_.daemon_state == DaemonState::GracefulTargetedBlur) {
+            } else if (effective_state == DaemonState::GracefulTargetedBlur) {
                 result.trigger_targeted_blur = true;
             }
         }
     } else {
         reset_trigger_state();
+    }
+
+    // Primary User Absence Evaluation (THREAT-03)
+    if (calibrated_ && config_.enable_primary_absence_defense) {
+        if (result.primary_user_present) {
+            if (primary_absence_active_) {
+                if (!primary_return_in_progress_) {
+                    primary_return_in_progress_ = true;
+                    primary_return_start_time_ = now;
+                }
+                std::chrono::duration<double> dwell = now - primary_return_start_time_;
+                if (dwell.count() >= config_.primary_recovery_dwell_sec) {
+                    primary_absence_active_ = false;
+                    primary_return_in_progress_ = false;
+                    primary_absence_timer_running_ = false;
+                    result.primary_absence_triggered = false;
+                } else {
+                    result.primary_absence_triggered = true;
+                    std::chrono::duration<double> total_abs = now - primary_last_seen_time_;
+                    result.primary_absence_duration_sec = total_abs.count();
+                }
+            } else {
+                primary_last_seen_time_ = now;
+                primary_absence_timer_running_ = false;
+                primary_return_in_progress_ = false;
+                result.primary_absence_triggered = false;
+            }
+        } else {
+            primary_return_in_progress_ = false;
+            if (!primary_absence_timer_running_) {
+                primary_absence_timer_running_ = true;
+                if (primary_last_seen_time_.time_since_epoch().count() == 0) {
+                    primary_last_seen_time_ = now;
+                }
+            }
+
+            std::chrono::duration<double> absence_duration = now - primary_last_seen_time_;
+            result.primary_absence_duration_sec = absence_duration.count();
+
+            if (absence_duration.count() >= config_.primary_absence_timeout_sec) {
+                primary_absence_active_ = true;
+                result.primary_absence_triggered = true;
+            } else {
+                result.primary_absence_triggered = false;
+            }
+        }
+
+        // Integrate with privacy trigger policies
+        if (result.primary_absence_triggered && effective_state != DaemonState::PauseDetection) {
+            if (effective_state == DaemonState::StrictFullLock) {
+                result.trigger_hard_defense = true;
+            } else if (effective_state == DaemonState::GracefulTargetedBlur) {
+                result.trigger_targeted_blur = true;
+            }
+        }
     }
 
     return result;
