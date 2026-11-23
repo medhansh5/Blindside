@@ -33,7 +33,7 @@ Blindside V4.1.0 resolves key architectural debt identified in the V4.0 generati
 - **Daemon State Thread-Safety**: Eliminated data race on `config_.daemon_state` across worker threads by utilizing thread-safe `atomic_state_` overrides.
 - **Linux X11 Headless Resilience**: Handled headless Linux container environments gracefully where `XOpenDisplay` returns `nullptr`, allowing daemon initialization to succeed without crashing.
 - **RingBuffer Test Stability**: Resolved consumer wait deadlocks in concurrent queue unit tests with explicit capacity boundaries and stop notifications.
-- **Packaging & Dependency Fixes**: Pinned CI container to Ubuntu 24.04 LTS with standard `libopencv-dev`; verified exact 64-hex SHA256 integrity for YuNet model download.
+- **Packaging & Dependency Fixes**: Pinned Linux CI to a native Ubuntu 24.04 runner with OpenCV 4.10.0 built from source and cached across runs (avoiding Ubuntu's incompatible standard `libopencv-dev` 4.6 package); verified exact 64-hex SHA256 integrity for YuNet model download.
 - **Python Reference Portability**: Guarded `ctypes.wintypes` Windows-specific imports, enabling `run_blindside.py` to execute across Linux and macOS.
 
 ---

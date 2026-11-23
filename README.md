@@ -249,7 +249,7 @@ For full testing procedures, see [docs/TESTING.md](docs/TESTING.md).
 ## 🛠️ Development
 
 - **Language Standard**: ISO C++20 (`std::array`, designated initializers, concepts).
-- **Core Library**: OpenCV 4.6+ / 4.10+ (core, imgproc, videoio, highgui, objdetect, calib3d).
+- **Core Library**: OpenCV 4.10+ (core, imgproc, videoio, highgui, objdetect, calib3d, dnn).
 - **Architecture Principle**: Keep platform-specific code strictly contained within `src/platform/`. Never introduce threat classification logic into platform managers.
 
 For release history and roadmap, see [RELEASE_NOTES.md](RELEASE_NOTES.md) and [CHANGELOG.md](CHANGELOG.md).
