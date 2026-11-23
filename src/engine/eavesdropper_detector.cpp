@@ -17,12 +17,14 @@ EavesdropperDetector::EavesdropperDetector(const Config& config,
 }
 
 bool EavesdropperDetector::calibrate(const RawFrame& frame) {
-    auto faces = face_detector_.detect(frame);
-    if (faces.empty()) {
-        std::cout << "[EavesdropperDetector] Calibration failed: No face detected." << std::endl;
+    auto det = face_detector_.detect(frame);
+    if (!det.success || det.faces.empty()) {
+        std::cout << "[EavesdropperDetector] Calibration failed: "
+                  << (!det.success ? det.error_message : "No face detected.") << std::endl;
         calibrated_ = false;
         return false;
     }
+    const auto& faces = det.faces;
 
     // Pick face closest to frame center
     float frame_center_x = frame.width * 0.5f;
@@ -67,6 +69,7 @@ void EavesdropperDetector::reset_absence_state() {
     primary_absence_timer_running_ = false;
     primary_last_seen_time_ = std::chrono::system_clock::now();
     primary_return_in_progress_ = false;
+    inference_failure_logged_ = false;
 }
 
 bool SecondaryFaceTrack::evaluate_liveness(double current_pitch, double current_yaw, float current_aspect_ratio,
@@ -247,7 +250,35 @@ FrameResult EavesdropperDetector::process_frame(const RawFrame& frame, std::opti
         return result;
     }
 
-    auto raw_faces = face_detector_.detect(frame);
+    auto det = face_detector_.detect(frame);
+    if (!det.success) {
+        result.inference_failure = true;
+        if (!inference_failure_logged_) {
+            std::cerr << "[EavesdropperDetector] Inference failure during frame processing: "
+                      << det.error_message << "; pausing absence tracking to avoid false triggers." << std::endl;
+            inference_failure_logged_ = true;
+        }
+        reset_trigger_state();
+        // Preserve an already-active defense state safely; do not interpret sensor failure as proof of user presence either.
+        if (primary_absence_active_) {
+            result.primary_absence_triggered = true;
+            std::chrono::duration<double> total_abs = now - primary_last_seen_time_;
+            result.primary_absence_duration_sec = total_abs.count();
+            if (effective_state == DaemonState::StrictFullLock) {
+                result.trigger_hard_defense = true;
+            } else if (effective_state == DaemonState::GracefulTargetedBlur) {
+                result.trigger_targeted_blur = true;
+            }
+        }
+        return result;
+    }
+
+    if (inference_failure_logged_) {
+        std::cout << "[EavesdropperDetector] Inference recovered; resuming normal detection pipeline." << std::endl;
+        inference_failure_logged_ = false;
+    }
+
+    const auto& raw_faces = det.faces;
     
     // 1. Raw YuNet Detections Diagnostic
     std::cout << "[DIAGNOSTICS] Raw YuNet faces detected: " << raw_faces.size() << std::endl;

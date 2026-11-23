@@ -117,13 +117,69 @@ void test_full_pipeline(const std::string& model_path) {
     std::cout << "[PASS] Full hardware pipeline integration (YuNet + SolvePnP + Threat Engine) tested successfully on empty frame." << std::endl;
 }
 
-int main() {
-    test_synthetic_eavesdropper_pipeline();
+void test_face_detector_error_handling(const std::string& model_path) {
+    blindside::Config config;
 
+    // 1. Uninitialized detector fails explicitly and safely
+    blindside::FaceDetector uninit_detector(config);
+    assert(!uninit_detector.is_initialized());
+
+    blindside::RawFrame frame;
+    frame.width = 640;
+    frame.height = 480;
+    frame.buffer.resize(frame.width * frame.height * 3, 0);
+    auto res_uninit = uninit_detector.detect(frame);
+    assert(!res_uninit.success);
+    assert(res_uninit.empty());
+    assert(!uninit_detector.last_error().empty());
+
+    // 2. Initialized detector validation paths
+    blindside::FaceDetector detector(config);
+    bool model_loaded = detector.initialize(model_path);
+    if (model_loaded) {
+        assert(detector.is_initialized());
+
+        // Corrupt / insufficient buffer size (reaches buffer validation path on initialized detector)
+        blindside::RawFrame corrupt_frame;
+        corrupt_frame.width = 640;
+        corrupt_frame.height = 480;
+        corrupt_frame.buffer.resize(10); // Far smaller than 640*480*3
+        auto res_corrupt = detector.detect(corrupt_frame);
+        assert(!res_corrupt.success);
+        assert(res_corrupt.empty());
+        assert(!detector.last_error().empty());
+        assert(detector.last_error().find("Buffer size mismatch") != std::string::npos);
+
+        // Zero dimensions frame
+        blindside::RawFrame zero_frame;
+        zero_frame.width = 0;
+        zero_frame.height = 0;
+        zero_frame.buffer.resize(100);
+        auto res_zero = detector.detect(zero_frame);
+        assert(!res_zero.success);
+        assert(!detector.last_error().empty());
+
+        // Genuine zero-face frame vs failure distinction
+        blindside::RawFrame clean_empty_frame;
+        clean_empty_frame.width = 640;
+        clean_empty_frame.height = 480;
+        clean_empty_frame.buffer.resize(clean_empty_frame.width * clean_empty_frame.height * 3, 0);
+        auto res_clean_zero = detector.detect(clean_empty_frame);
+        assert(res_clean_zero.success == true);  // Successful inference
+        assert(res_clean_zero.faces.empty());   // Successfully determined zero faces present
+        assert(detector.last_error().empty());  // No error reported
+    }
+
+    std::cout << "[PASS] test_face_detector_error_handling (safe handling of uninitialized, corrupt, zero frames, and zero-face distinction)" << std::endl;
+}
+
+int main() {
     auto exe_dir = blindside::get_executable_directory();
     // In the build tree, the model might be copied to the output or reachable relative to root
     std::string model_path = (exe_dir.parent_path() / "models" / "face_detection_yunet_2023mar.onnx").string();
-    
+
+    test_face_detector_error_handling(model_path);
+    test_synthetic_eavesdropper_pipeline();
     test_full_pipeline(model_path);
     
     return 0;

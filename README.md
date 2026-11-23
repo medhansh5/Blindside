@@ -88,8 +88,9 @@ cd Blindside
 ```bash
 sudo apt-get update
 sudo apt-get install -y cmake ninja-build build-essential pkg-config \
-    libopencv-dev libx11-dev libxext-dev
+    libx11-dev libxext-dev curl
 ```
+*Note: OpenCV 4.10+ with `core, imgproc, dnn, videoio, highgui, objdetect, calib3d` modules is required for YuNet 2023mar ONNX compatibility.*
 
 #### Windows
 Ensure you have:

@@ -29,7 +29,7 @@ void test_facial_aspect_ratio_calculation() {
 class MockFaceDetector : public blindside::IFaceDetector {
 public:
     bool initialize(const std::string& model_path = "") override { (void)model_path; return true; }
-    std::vector<blindside::FaceBox> detect(const blindside::RawFrame& frame) override {
+    blindside::DetectionResult detect(const blindside::RawFrame& frame) override {
         std::vector<blindside::FaceBox> res;
         blindside::FaceBox primary;
         primary.x = 300; primary.y = 200; primary.width = 100; primary.height = 100;

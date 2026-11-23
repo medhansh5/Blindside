@@ -42,6 +42,37 @@ struct FaceBox {
     float center_y() const { return y + height * 0.5f; }
 };
 
+struct DetectionResult {
+    bool success = true;
+    std::vector<FaceBox> faces;
+    std::string error_message;
+
+    DetectionResult() = default;
+    DetectionResult(std::vector<FaceBox> f) : success(true), faces(std::move(f)) {}
+    DetectionResult(bool succ, std::vector<FaceBox> f, std::string err = "")
+        : success(succ), faces(std::move(f)), error_message(std::move(err)) {}
+
+    static DetectionResult failure(std::string err) {
+        DetectionResult r;
+        r.success = false;
+        r.error_message = std::move(err);
+        return r;
+    }
+
+    static DetectionResult successful(std::vector<FaceBox> f = {}) {
+        return DetectionResult(true, std::move(f));
+    }
+
+    bool empty() const { return faces.empty(); }
+    size_t size() const { return faces.size(); }
+    const FaceBox& operator[](size_t idx) const { return faces[idx]; }
+    FaceBox& operator[](size_t idx) { return faces[idx]; }
+    auto begin() { return faces.begin(); }
+    auto end() { return faces.end(); }
+    auto begin() const { return faces.begin(); }
+    auto end() const { return faces.end(); }
+};
+
 struct HeadPose {
     double pitch_deg = 0.0; // Rotation around X-axis (looking up/down)
     double yaw_deg = 0.0;   // Rotation around Y-axis (looking left/right)
@@ -67,6 +98,7 @@ struct FrameResult {
     uint64_t frame_id = 0;
     std::chrono::system_clock::time_point timestamp;
     DaemonState daemon_state = DaemonState::GracefulTargetedBlur;
+    bool inference_failure = false;
     bool primary_user_present = false;
     bool primary_absence_triggered = false;
     double primary_absence_duration_sec = 0.0;

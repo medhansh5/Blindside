@@ -112,6 +112,9 @@ private:
     // Temporal persistence tracks for secondary faces
     std::vector<SecondaryFaceTrack> secondary_tracks_{};
     size_t next_track_id_ = 1;
+
+    // Inference failure state & log deduplication
+    bool inference_failure_logged_ = false;
 };
 
 } // namespace blindside

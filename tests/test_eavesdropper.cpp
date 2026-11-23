@@ -9,7 +9,7 @@
 class MockFaceDetector : public blindside::IFaceDetector {
 public:
     bool initialize(const std::string& model_path = "") override { (void)model_path; return true; }
-    std::vector<blindside::FaceBox> detect(const blindside::RawFrame& frame) override {
+    blindside::DetectionResult detect(const blindside::RawFrame& frame) override {
         std::vector<blindside::FaceBox> res;
         blindside::FaceBox primary;
         primary.x = 300; primary.y = 200; primary.width = 100; primary.height = 100;
@@ -143,7 +143,7 @@ void test_liveness_timestamp_expiration() {
 class TwoPeopleMockFaceDetector : public blindside::IFaceDetector {
 public:
     bool initialize(const std::string& model_path = "") override { (void)model_path; return true; }
-    std::vector<blindside::FaceBox> detect(const blindside::RawFrame& frame) override {
+    blindside::DetectionResult detect(const blindside::RawFrame& frame) override {
         (void)frame;
         std::vector<blindside::FaceBox> res;
 
@@ -198,7 +198,7 @@ void test_two_real_people() {
 class EmptyFrameMockFaceDetector : public blindside::IFaceDetector {
 public:
     bool initialize(const std::string& model_path = "") override { (void)model_path; return true; }
-    std::vector<blindside::FaceBox> detect(const blindside::RawFrame& frame) override {
+    blindside::DetectionResult detect(const blindside::RawFrame& frame) override {
         (void)frame;
         return {}; // 0 faces detected when user leaves frame
     }
@@ -266,7 +266,7 @@ public:
 
     float track_a_jitter = 0.0f;
 
-    std::vector<blindside::FaceBox> detect(const blindside::RawFrame& frame) override {
+    blindside::DetectionResult detect(const blindside::RawFrame& frame) override {
         (void)frame;
         std::vector<blindside::FaceBox> res;
 
@@ -366,7 +366,7 @@ class AbsenceMockFaceDetector : public blindside::IFaceDetector {
 public:
     bool primary_present = true;
     bool initialize(const std::string& model_path = "") override { (void)model_path; return true; }
-    std::vector<blindside::FaceBox> detect(const blindside::RawFrame& frame) override {
+    blindside::DetectionResult detect(const blindside::RawFrame& frame) override {
         (void)frame;
         std::vector<blindside::FaceBox> res;
         if (primary_present) {
@@ -471,6 +471,104 @@ void test_primary_user_absence_lifecycle() {
     std::cout << "[TEST PASSED] Primary user absence lifecycle (brief occlusion, sustained absence, recovery dwell, camera failure isolation) test." << std::endl;
 }
 
+class InferenceFailureMockDetector : public blindside::IFaceDetector {
+public:
+    bool should_fail = false;
+    bool user_present = true;
+
+    bool initialize(const std::string& model_path = "") override { (void)model_path; return true; }
+
+    blindside::DetectionResult detect(const blindside::RawFrame& frame) override {
+        (void)frame;
+        if (should_fail) {
+            return blindside::DetectionResult::failure("OpenCV DNN inference failure: test simulation");
+        }
+
+        std::vector<blindside::FaceBox> res;
+        if (user_present) {
+            blindside::FaceBox primary;
+            primary.x = 270; primary.y = 190; primary.width = 100; primary.height = 100;
+            primary.landmarks[0] = {300, 220}; primary.landmarks[1] = {340, 220};
+            primary.landmarks[2] = {320, 240}; primary.landmarks[3] = {300, 260}; primary.landmarks[4] = {340, 260};
+            res.push_back(primary);
+        }
+        return blindside::DetectionResult::successful(res);
+    }
+
+    bool is_initialized() const override { return true; }
+};
+
+void test_inference_failure_semantics() {
+    blindside::Config config;
+    config.enable_primary_absence_defense = true;
+    config.primary_absence_timeout_sec = 0.2; // 200ms
+    config.primary_recovery_dwell_sec = 0.15; // 150ms
+    config.daemon_state = blindside::DaemonState::StrictFullLock;
+
+    InferenceFailureMockDetector detector;
+    blindside::PoseEstimator estimator(config);
+    detector.initialize();
+
+    blindside::EavesdropperDetector eavesdropper(config, detector, estimator);
+
+    blindside::RawFrame frame;
+    frame.width = 640;
+    frame.height = 480;
+    frame.buffer.resize(frame.width * frame.height * 3, 128);
+
+    // 1. Calibrate with successful detection
+    assert(eavesdropper.calibrate(frame));
+    auto res_calm = eavesdropper.process_frame(frame);
+    assert(res_calm.primary_user_present);
+    assert(!res_calm.inference_failure);
+    assert(!res_calm.primary_absence_triggered);
+
+    // 2. Simulate sustained inference failure (longer than absence timeout: 300ms > 200ms)
+    detector.should_fail = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    auto res_failed = eavesdropper.process_frame(frame);
+
+    // Inference failure must be reported explicitly
+    assert(res_failed.inference_failure == true);
+    // MUST NOT advance absence timers, create absence evidence, or activate THREAT-03
+    assert(res_failed.primary_absence_triggered == false);
+    assert(res_failed.trigger_hard_defense == false);
+    assert(res_failed.trigger_targeted_blur == false);
+
+    // 3. Normal inference recovers
+    detector.should_fail = false;
+    auto res_recovered = eavesdropper.process_frame(frame);
+    assert(!res_recovered.inference_failure);
+    assert(res_recovered.primary_user_present);
+    assert(!res_recovered.primary_absence_triggered);
+
+    // 4. Genuine absence triggers defense
+    detector.user_present = false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    auto res_absent = eavesdropper.process_frame(frame);
+    assert(res_absent.primary_absence_triggered == true);
+    assert(res_absent.trigger_hard_defense == true);
+
+    // 5. Inference fails WHILE absence defense is ALREADY active:
+    // Defense state must be safely preserved! Do not interpret failure as proof of user presence.
+    detector.should_fail = true;
+    auto res_fail_during_defense = eavesdropper.process_frame(frame);
+    assert(res_fail_during_defense.inference_failure == true);
+    assert(res_fail_during_defense.primary_absence_triggered == true);
+    assert(res_fail_during_defense.trigger_hard_defense == true);
+
+    // 6. User returns and inference recovers
+    detector.should_fail = false;
+    detector.user_present = true;
+    eavesdropper.process_frame(frame); // User detected, start dwell
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    auto res_returned = eavesdropper.process_frame(frame);
+    assert(!res_returned.primary_absence_triggered);
+    assert(!res_returned.trigger_hard_defense);
+
+    std::cout << "[TEST PASSED] Inference failure semantics (zero-face vs failure distinction, absence isolation, defense preservation) test." << std::endl;
+}
+
 int main() {
     test_primary_user_calibration();
     test_eavesdropper_gaze_hysteresis();
@@ -481,6 +579,7 @@ int main() {
     test_daemon_state_thread_safety();
     test_per_track_liveness_multiple_tracks();
     test_primary_user_absence_lifecycle();
+    test_inference_failure_semantics();
     std::cout << "All EavesdropperDetector unit tests passed successfully!\n";
     return 0;
 }

@@ -21,8 +21,8 @@ include_directories(
 # Find Dependencies
 find_package(Threads REQUIRED)
 
-# OpenCV Search
-find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio highgui objdetect calib3d)
+# OpenCV Search (OpenCV 4.10+ required for YuNet 2023mar ONNX compatibility)
+find_package(OpenCV 4.10 REQUIRED COMPONENTS core imgproc videoio highgui objdetect calib3d dnn)
 if(OpenCV_FOUND)
     message(STATUS "OpenCV found version: ${OpenCV_VERSION}")
     include_directories(${OpenCV_INCLUDE_DIRS})

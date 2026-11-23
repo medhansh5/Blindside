@@ -12,28 +12,58 @@ permissions:
 jobs:
   build_linux:
     name: Linux X11 Build & Tests
-    runs-on: ubuntu-latest
-    container:
-      image: ubuntu:24.04
+    runs-on: ubuntu-24.04
     steps:
-      - name: Install git for checkout
-        run: apt-get update && apt-get install -y git
-
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
-          apt-get update
-          apt-get install -y \
+          sudo apt-get update
+          sudo apt-get install -y \
             build-essential \
             pkg-config \
             cmake \
             ninja-build \
-            libopencv-dev \
             libx11-dev \
             libxext-dev \
             curl
+
+      - name: Cache OpenCV 4.10.0
+        id: cache-opencv
+        uses: actions/cache@v4
+        with:
+          path: ~/opencv-4.10.0
+          key: ${{ runner.os }}-opencv-4.10.0-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-opencv-4.10.0-
+
+      - name: Build OpenCV 4.10.0
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch 4.10.0 --depth 1 https://github.com/opencv/opencv.git /tmp/opencv
+          cmake -S /tmp/opencv -B /tmp/opencv/build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$HOME/opencv-4.10.0 \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DOPENCV_GENERATE_PKGCONFIG=ON \
+            -DBUILD_LIST=core,imgproc,dnn,videoio,highgui,objdetect,calib3d \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_PERF_TESTS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_opencv_apps=OFF \
+            -DBUILD_DOCS=OFF \
+            -DWITH_CUDA=OFF \
+            -DWITH_IPP=OFF \
+            -DWITH_OPENCL=OFF
+          cmake --build /tmp/opencv/build --target install
+          rm -rf /tmp/opencv
+
+      - name: Install OpenCV 4.10.0 to system
+        run: |
+          sudo cp -r $HOME/opencv-4.10.0/* /usr/local/
+          sudo ldconfig
 
       - name: Verify Toolchain & Dependencies
         run: |
@@ -61,7 +91,11 @@ jobs:
           int main() {
               try {
                   cv::Ptr<cv::FaceDetectorYN> detector = cv::FaceDetectorYN::create("models/face_detection_yunet_2023mar.onnx", "", cv::Size(320, 320));
-                  std::cout << "Successfully loaded ONNX model using FaceDetectorYN." << std::endl;
+                  cv::Mat blank = cv::Mat::zeros(320, 320, CV_8UC3);
+                  cv::Mat faces;
+                  detector->setInputSize(blank.size());
+                  detector->detect(blank, faces);
+                  std::cout << "Successfully validated ONNX model inference using FaceDetectorYN." << std::endl;
               } catch (const cv::Exception& e) {
                   std::cerr << "OpenCV Exception: " << e.what() << std::endl;
                   return 1;
@@ -93,8 +127,8 @@ jobs:
           
           Requirements:
           - Linux x64 (X11 or Wayland)
-          - OpenCV and X11 libraries:
-            sudo apt-get install libopencv-dev libx11-6 libxext6
+          - OpenCV 4.10+ (core, imgproc, dnn, videoio, highgui, objdetect, calib3d) and X11 libraries:
+            libx11-6 libxext6
           - webcam for live detection
           
           Run:
