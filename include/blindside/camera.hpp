@@ -2,6 +2,7 @@
 #define BLINDSIDE_CAMERA_HPP
 
 #include "blindside/config.hpp"
+#include "blindside/types.hpp"
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -17,6 +18,8 @@ struct RawFrame {
     int channels = 3;
     std::vector<uint8_t> buffer; // BGR format
     std::chrono::system_clock::time_point timestamp;
+    bool is_synthetic = false;
+    std::vector<FaceBox> synthetic_faces{};
 };
 
 class CameraCapture {

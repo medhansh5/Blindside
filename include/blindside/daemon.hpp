@@ -47,7 +47,6 @@ public:
      */
     void set_daemon_state(DaemonState state) {
         atomic_state_.store(state, std::memory_order_release);
-        config_.daemon_state = state;
     }
 
     DaemonState get_daemon_state() const {

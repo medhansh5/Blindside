@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(blindside VERSION 4.0.0 LANGUAGES CXX)
+project(blindside VERSION 4.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,8 +21,8 @@ include_directories(
 # Find Dependencies
 find_package(Threads REQUIRED)
 
-# OpenCV Search
-find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio highgui objdetect calib3d)
+# OpenCV Search (OpenCV 4.10+ required for YuNet 2023mar ONNX compatibility)
+find_package(OpenCV 4.10 REQUIRED COMPONENTS core imgproc videoio highgui objdetect calib3d dnn)
 if(OpenCV_FOUND)
     message(STATUS "OpenCV found version: ${OpenCV_VERSION}")
     include_directories(${OpenCV_INCLUDE_DIRS})
@@ -81,6 +81,7 @@ target_link_libraries(blindside_daemon PRIVATE blindside_lib)
 
 # Copy Models to output directory for all platforms
 add_custom_command(TARGET blindside_daemon POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/models"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/models" "$<TARGET_FILE_DIR:blindside_daemon>/models"
 )
 

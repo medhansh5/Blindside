@@ -6,7 +6,7 @@
 #include <iostream>
 #include <thread>
 
-void test_ear_calculation() {
+void test_facial_aspect_ratio_calculation() {
     blindside::FaceBox face;
     face.width = 100.0f;
     face.height = 120.0f;
@@ -14,17 +14,22 @@ void test_ear_calculation() {
     face.landmarks[1] = {70.0f, 40.0f};  // Left Eye
     face.landmarks[2] = {50.0f, 65.0f};  // Nose
 
+    float far = blindside::PoseEstimator::compute_facial_aspect_ratio(face);
+    assert(far > 0.10f && far < 0.45f);
+
+    // Verify backward compatibility alias returns identical value
     float ear = blindside::PoseEstimator::compute_ear(face);
-    assert(ear > 0.10f && ear < 0.45f);
+    assert(ear == far);
+    (void)far;
     (void)ear;
 
-    std::cout << "[TEST PASSED] Eye Aspect Ratio (EAR) calculation test." << std::endl;
+    std::cout << "[TEST PASSED] Geometric Facial Aspect Ratio (FAR) proxy calculation test." << std::endl;
 }
 
 class MockFaceDetector : public blindside::IFaceDetector {
 public:
     bool initialize(const std::string& model_path = "") override { (void)model_path; return true; }
-    std::vector<blindside::FaceBox> detect(const blindside::RawFrame& frame) override {
+    blindside::DetectionResult detect(const blindside::RawFrame& frame) override {
         std::vector<blindside::FaceBox> res;
         blindside::FaceBox primary;
         primary.x = 300; primary.y = 200; primary.width = 100; primary.height = 100;
@@ -74,7 +79,7 @@ void test_photo_spoof_rejection() {
 }
 
 int main() {
-    test_ear_calculation();
+    test_facial_aspect_ratio_calculation();
     test_photo_spoof_rejection();
     std::cout << "All Anti-Spoofing & Liveness unit tests passed successfully!\n";
     return 0;
