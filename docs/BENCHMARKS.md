@@ -20,7 +20,7 @@ We ran all these numbers on a real laptop, not a data center server.
 | **CPU Footprint (Active)**| **[Pending Validation]** | When running at 30 FPS. |
 | **CPU Footprint (Idle)**  | **[Pending Validation]** | When monitoring at 5 FPS because only you are in the frame. |
 | **Memory Footprint (RSS)**| **[Pending Validation]** | That's it. It stays flat. No memory leaks. |
-| **Network I/O** | **Verified Offline** | Application does not establish any network sockets. |
+| **Network I/O** | **Verified Offline** | Application does not establish external network sockets or transmit telemetry. |
 | **In-Loop Heap Allocs**  | **Verified Zero** | Zero dynamic mallocs inside the frame loop. Checked via Valgrind Massif. |
 
 ## 🛠️ Reproducing This Yourself

@@ -10,7 +10,7 @@ Many commercial physical-security and attention-tracking tools capture continuou
 
 ## 1. Privacy Principles
 
-1. **Local-Only Inference**: All computer vision algorithms—face detection, 6D pose estimation, liveness analysis, and threat classification—execute entirely on the local host machine using CPU/GPU hardware.
+1. **Local-Only Inference**: All computer vision algorithms—face detection, 3D head pose estimation, liveness analysis, and threat classification—execute entirely on the local host machine using CPU/GPU hardware.
 2. **Ephemeral Memory Model**: Webcam frames exist strictly in volatile RAM within a small, fixed pre-allocated buffer (`RingBuffer<RawFrame, 4>`). Frames are processed and immediately overwritten by subsequent camera captures.
 3. **No Biometric Identification**: Blindside does not identify *who* is looking at your screen. It measures *spatial geometry* (where a face is oriented relative to the display). It never computes facial recognition embeddings, maintains face databases, or assigns persistent human identities across daemon restarts.
 4. **No Image Storage or Transmission**: Blindside has no code paths for saving JPEG/PNG images to disk, taking screenshots, or opening outbound network connections for camera telemetry.
@@ -37,7 +37,7 @@ Webcam Sensor
 │          │                                                  │
 │          ▼                                                  │
 │   cv::solvePnP Head Pose & Gaze Vector                      │
-│   (Extracts: Pitch, Yaw, Roll, EAR float)                   │
+│   (Extracts: Pitch, Yaw, Roll, FAR float)                   │
 │          │                                                  │
 │          ▼                                                  │
 │   [ FRAME IMMEDIATELY DISCARDED / OVERWRITTEN ]             │
@@ -53,19 +53,25 @@ At no point does raw or compressed visual data leave the process boundary.
 
 ## 3. What Blindside Stores
 
-Blindside writes structured compliance audit logs to a local file (`blindside_threats.log`) for organizational auditing (e.g. NIST SP 800-53 PE-3, ISO 27001 physical security domains).
+Blindside writes structured physical-access security event audit logs to a local file (`blindside_threats.log`) for physical security review and event auditing (tagged with informational reference metadata such as `Control=NIST_SP_800_53_PE_3`).
 
 Each log entry records only high-level metadata:
 - **Timestamp**: Local system time of the event.
-- **Threat Type**: Trigger action taken (e.g. `TARGETED_WORKSPACE_BLUR`, `HARD_WORKSTATION_LOCK`, `SOFT_SECONDARY_FACE_DETECTED`).
-- **Gaze Duration**: Measured duration of sustained secondary gaze in seconds.
+- **Threat Type & Transition**: Trigger action state and lifecycle transition (e.g. `TARGETED_WORKSPACE_BLUR_ACTIVATED`, `HARD_WORKSTATION_LOCK_ACTIVATED`, `PRIMARY_USER_ABSENT_BLUR_ACTIVATED`, `TARGETED_WORKSPACE_BLUR_DEACTIVATED`).
+- **Gaze Duration**: Measured duration of sustained secondary gaze or absence in seconds.
 - **Faces Detected**: Total number of faces present in the scene.
 - **Liveness Verified**: Boolean indicator confirming whether the detected face exhibited live micro-movements.
-- **Compliance Control Tag**: Reference to relevant compliance standards (`NIST_SP_800_53_PE_3`).
+- **Security Control Metadata**: Informational control tag referencing physical-access security standards (`Control=NIST_SP_800_53_PE_3`).
+
+> [!IMPORTANT]
+> **Informational Metadata Only**: The string `Control=NIST_SP_800_53_PE_3` emitted in event logs is strictly informational metadata for log classification. Emitting or logging this identifier does not establish, certify, or guarantee compliance with NIST SP 800-53, ISO 27001, or any other regulatory framework.
+
+> [!NOTE]
+> **Transition-Based Deduplication**: Audit events are recorded only on state transitions (`_ACTIVATED`, `_ESCALATED`, `_DEACTIVATED`) rather than on every frame, eliminating 30 Hz disk I/O while preserving a full security trail.
 
 Example log entry:
 ```text
-2026-10-04 09:15:30 [AUDIT_ALERT] Threat=TARGETED_WORKSPACE_BLUR GazeDurationSec=1.35 FacesDetected=2 LivenessVerified=1 Control=NIST_SP_800_53_PE_3
+2026-11-13 20:30:15 [AUDIT_ALERT] Threat=TARGETED_WORKSPACE_BLUR_ACTIVATED GazeDurationSec=1.35 FacesDetected=2 LivenessVerified=1 Control=NIST_SP_800_53_PE_3
 ```
 
 ---
@@ -76,7 +82,7 @@ Example log entry:
 - **No Screenshots**: The daemon inspects active window bounding rectangles (`WindowRect`), never the graphical contents of your screen.
 - **No Biometric Templates**: No facial geometry vectors, feature hashes, or recognition representations are generated or stored.
 - **No Telemetry / Analytics**: There are no telemetry services, tracking beacons, error report uploads, or cloud accounts.
-- **No Network Sockets**: The core detection daemon opens zero network listening ports and initiates zero outbound connections.
+- **No External Telemetry or Transmission**: The core detection daemon contains no remote networking code and never transmits camera frames, biometric features, or surveillance telemetry over external networks.
 
 ---
 
