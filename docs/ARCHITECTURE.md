@@ -62,22 +62,35 @@ Camera Sensor
 - **Resilience & Fallback**: If the hardware webcam is disconnected or unavailable, the capture pipeline safely falls back to a synthetic frame generator (`SyntheticCameraFallback`), preventing daemon crashes.
 
 ### Face Detection (`src/engine/face_detector.cpp`)
-- Employs OpenCV's **YuNet** ONNX model (`face_detection_yunet_2023mar.onnx`), an ultra-lightweight, high-speed convolutional neural network tailored for edge face detection.
+- Employs OpenCV's **YuNet** ONNX model (`face_detection_yunet_2023mar.onnx`), an ultra-lightweight, high-speed convolutional neural network tailored for edge face detection. Requires OpenCV 4.10+ for YuNet ONNX layer compatibility.
 - Produces:
   - Bounding box (`x, y, width, height`)
   - Detection confidence score (thresholded at `min_confidence`, default 0.60)
   - 5 facial landmarks: right eye, left eye, nose tip, right mouth corner, left mouth corner.
+- **Inference Failure Semantics (`DetectionResult`)**:
+  - `FaceDetector::detect()` returns an explicit `DetectionResult` struct (`success`, `faces`, `error_message`), strictly distinguishing valid zero-face detections (`success = true`, empty vector) from inference exceptions (`success = false`).
+  - Pre-inference validation catches uninitialized detector state, null instance pointers, invalid frame dimensions ($w \le 0$ or $h \le 0$), empty frame buffers, and buffer size mismatches ($< w \times h \times 3$ bytes).
+  - Neural inference catches both `const cv::Exception&` (OpenCV runtime/model exceptions) and `const std::exception&` (standard library exceptions), recording the error string under a thread-safe mutex and returning `DetectionResult::failure(...)`.
+  - When `EavesdropperDetector` receives an inference failure:
+    - Sets `FrameResult::inference_failure = true`.
+    - Resets trigger state (`reset_trigger_state()`) to clear secondary hysteresis timers.
+    - Suspends primary absence timers rather than advancing them, preventing sensor or inference glitches from triggering false THREAT-03 absence defenses.
+    - If a primary absence defense was already active when inference failed, the defense state is safely preserved to prevent unauthorized access from an accidental unlock.
+    - Logs errors with one-time deduplication (`inference_failure_logged_`) to avoid log flooding.
+    - Once inference succeeds again (`det.success == true`), `inference_failure_logged_` is cleared, and both primary user absence monitoring and secondary face / eavesdropper tracking immediately resume normal processing.
 
 ### Pose & Gaze Estimation (`src/engine/pose_estimator.cpp`)
-- Solves the Perspective-n-Point problem using `cv::solvePnP`.
+- Solves the Perspective-n-Point problem using OpenCV `cv::solvePnP` (`SOLVEPNP_EPNP`).
 - Maps 2D image coordinates from the 5 YuNet landmarks against a canonical 3D anthropometric face model.
-- Derives 6-degree-of-freedom head pose:
-  - **Pitch** (degrees, up/down rotation)
-  - **Yaw** (degrees, left/right rotation)
-  - **Roll** (degrees, head tilt)
-  - **Gaze Vector**: Normalized 3D unit vector extending outward from the face center.
-- **Screen Gaze Bounds**: Gaze is classified as looking at the screen when:
+- Derives 3D rotational head pose and 3D gaze vector:
+  - **Pitch** (degrees, up/down head rotation relative to screen center)
+  - **Yaw** (degrees, left/right horizontal head turn relative to screen center)
+  - **Roll** (degrees, lateral head tilt)
+  - **Gaze Vector**: Normalized 3D unit vector extending outward from the face center, computed from pitch and yaw.
+  *(Note: While `cv::solvePnP` calculates internal translation vectors, `HeadPose` only reports 3 rotational degrees of freedom and unit gaze direction; translation coordinates are not exposed).*
+- **Screen Gaze Bounds (Production C++)**: Gaze is classified as looking at the screen when:
   $$\text{Pitch} \in [-25^\circ, +25^\circ] \quad \text{and} \quad \text{Yaw} \in [-30^\circ, +30^\circ]$$
+  *(Note: The Python reference harness in `tools/reference/` uses default bounds of $\text{Pitch} \in [-20^\circ, +20^\circ]$ and $\text{Yaw} \in [-25^\circ, +25^\circ]$).*
 
 ### Temporal Tracking
 - Assigns persistent identities across consecutive frames to distinguish:
@@ -113,8 +126,9 @@ Camera Sensor
   - **Absent Primary User**: Confirmed primary user absence exceeding timeout threshold. Triggers configured defense state (workspace redaction or session lock).
 
 ### Synthetic Eavesdropper Injection
-- Built-in deterministic synthetic frame simulation in `CameraCapture` (`--synthetic`) generates valid synthetic face fixtures with anthropometric landmarks and realistic micro-movement jitter.
-- Exercises the complete downstream pipeline (`detect` $\to$ `solvePnP` $\to$ `calibrate` $\to$ `liveness` $\to$ `hysteresis` $\to$ `defense`) without hardware webcams or physical ONNX model files on disk.
+- Built-in deterministic synthetic frame simulation in `CameraCapture` (`--synthetic`) generates valid synthetic face fixtures (`synthetic_faces`) with anthropometric landmarks and realistic micro-movement jitter.
+- In synthetic mode, `FaceDetector::detect()` returns `DetectionResult::successful(frame.synthetic_faces)`, directly bypassing ONNX neural network inference.
+- Exercises the complete downstream pipeline (`solvePnP` $\to$ `calibrate` $\to$ `tracking` $\to$ `liveness` $\to$ `hysteresis` $\to$ `defense`) deterministically without requiring physical hardware webcams or live ONNX inference in CI runners.
 
 ---
 
@@ -128,7 +142,7 @@ Camera Sensor
   - `DaemonState::StrictFullLock`: Requests OS workstation lock.
 - Coordinates overlay lifecycle: triggers targeted overlays when threats appear, repositions overlays if active windows move, and clears overlays when the space is clear.
 - Drains the non-blocking platform message loop (`pump_events()`) every frame to maintain UI thread responsiveness.
-- Writes structured compliance audit logs to `blindside_threats.log`.
+- Writes structured physical-access security event logs to `blindside_threats.log`.
 
 ### Platform Manager Abstraction (`include/blindside/platform.hpp`)
 `PlatformManager` defines the pure virtual interface for native OS integrations:
@@ -194,16 +208,19 @@ struct PlatformCapabilities {
 
 ---
 
-## 6. Audit Logging & Compliance
+## 6. Physical-Access Security Event Auditing
 
-Blindside logs structured security alerts for compliance reporting (NIST SP 800-53 PE-3, ISO 27001 physical security domain):
+Blindside logs structured security alerts for physical-access security event auditing, including informational metadata tags (`Control=NIST_SP_800_53_PE_3`):
 - File: `blindside_threats.log`
 - Format:
   ```text
   2026-11-13 20:30:15 [AUDIT_ALERT] Threat=HARD_WORKSTATION_LOCK_ACTIVATED GazeDurationSec=1.25 FacesDetected=2 LivenessVerified=1 Control=NIST_SP_800_53_PE_3
   ```
 - **Transition-Based Deduplication**: Logging is triggered on state transitions (`_ACTIVATED`, `_ESCALATED`, `_DEACTIVATED`) rather than on every frame, eliminating 30 Hz disk spam during prolonged active threats.
-- **Privacy Assurance**: The log records *events and measurements* (gaze duration, face count, verification flags). It **never** writes image buffers, facial biometric vectors, or identity identifiers.
+- **Privacy Assurance**: The log records *events and measurements* (gaze duration, face count, verification flags, control reference). It **never** writes image buffers, facial biometric vectors, or identity identifiers.
+
+> [!NOTE]
+> **Informational Reference Metadata**: The string `Control=NIST_SP_800_53_PE_3` is emitted strictly as an informational event tag for security event review. Emitting this identifier does not establish, certify, or guarantee compliance with NIST SP 800-53, ISO 27001, or any other regulatory framework.
 
 ---
 
@@ -211,7 +228,7 @@ Blindside logs structured security alerts for compliance reporting (NIST SP 800-
 
 Blindside employs strict isolation between test tiers:
 - **Platform Hardening Suite (`tests/test_platform.cpp`)**: Verifies 11 platform contracts (capability detection, overlay lifecycle, idempotent resizing, cleanup, unsupported fallbacks, invalid geometry, multi-monitor negative coordinates, resilience, threat engine decoupling, state immutability, and audit log transition deduplication).
-- **Synthetic Pipeline Suite (`tests/test_pipeline.cpp`)**: End-to-end integration test validating synthetic camera injection, solvePnP pose estimation, primary user calibration, eavesdropper elevation, and recovery.
+- **Synthetic Pipeline Suite (`tests/test_pipeline.cpp`)**: Integration tests validating synthetic camera injection, downstream solvePnP pose estimation, primary user calibration, eavesdropper elevation, and recovery using structured detection fixtures. Also validates live YuNet ONNX inference on empty frames when the model file is available on disk (skipping gracefully if absent), and detector error handling under malformed or uninitialized inputs.
 - **Detector & Liveness Suites (`tests/test_eavesdropper.cpp`, `tests/test_liveness.cpp`)**: Unit tests validating per-track multi-face liveness isolation, photo spoof rejection, primary absence lifecycle, and geometric FAR proxy calculation.
 - **Pipeline & Math Tests**: Dedicated tests for ring buffers (`test_ring_buffer.cpp`), gaze math (`test_gaze_math.cpp`), and camera failure handling (`test_camera_failure.cpp`).
 - **Python Reference Suite (`tools/reference/test_blindside.py`)**: Independent algorithmic reference test suite validating synthetic camera fallback, gaze hysteresis, calibration, gaze vectors, and liveness.

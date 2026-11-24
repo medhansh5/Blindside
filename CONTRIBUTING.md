@@ -10,13 +10,13 @@ If you're down with building fast, zero-latency privacy tools in C++20, let's go
 
 ### Prerequisites
 You need the holy trinity:
-- **C++20 Compiler**: GCC 10+, Clang 11+, or MSVC 2022+
+- **C++20 Compiler**: GCC 11+, Clang 14+, or MSVC 2022+ (Visual Studio 17.0+)
 - **Build System**: CMake 3.20+ and Ninja
-- **Libraries**: OpenCV 4.x (with `core`, `objdetect`, `calib3d`)
+- **Libraries**: OpenCV 4.10+ (with `core`, `imgproc`, `videoio`, `highgui`, `objdetect`, `calib3d`, `dnn`)
 
 ### The Build Loop (Linux)
 ```bash
-git clone https://github.com/AshcrestHQ/Blindside.git
+git clone https://github.com/medhansh5/Blindside.git
 cd Blindside
 cmake -S . -B build && cmake --build build
 ```
@@ -35,7 +35,7 @@ If you break these, your PR gets closed:
 1. **No Cloud BS**: Blindside is strictly edge-native. Do not add any networking code.
 2. **Zero In-Loop Allocations**: Do not `new` or `malloc` inside `process_frame`. We use fixed-capacity arrays and `RingBuffer`.
 3. **Use the Abstractions**: Do not dump Win32 or X11 code inside the core engine. Use `src/platform/`.
-4. **Don't Fake the AI**: If you touch `FaceDetector`, use the actual YuNet OpenCV pipeline. No dummy bounding boxes.
+4. **Don't Fake the AI**: If you touch `FaceDetector`, use the actual YuNet OpenCV pipeline (`FaceDetectorYN`) with OpenCV 4.10+. Synthetic test fixtures are reserved for deterministic pipeline testing via `CameraCapture::set_synthetic_eavesdropper()`; production detection requires real inference.
 
 ### Naming Conventions
 - Classes: `PascalCase`

@@ -19,30 +19,31 @@ You can have full-disk encryption, a zero-trust network perimeter, hardware secu
 
 "Shoulder surfing" is one of the most common physical security attack vectors, yet standard operating systems completely ignore it.
 
-Blindside fixes that at the edge. By running lightweight face detection and 6D head pose estimation locally, Blindside detects when someone behind you turns their gaze toward your monitor. If their gaze holds for more than a second, Blindside reacts instantly—redacting your active workspace window or locking your session before sensitive data leaks.
+Blindside fixes that at the edge. By running lightweight face detection and 3D head pose estimation locally, Blindside detects when someone behind you turns their gaze toward your monitor. If their gaze holds for more than a second, Blindside reacts instantly—redacting your active workspace window or locking your session before sensitive data leaks.
 
 ---
 
 ## 🔒 Privacy Principles
 
 Blindside is built on a strict privacy model:
-- **100% Local Inference**: All computer vision runs on your machine's CPU/GPU. Zero network sockets are opened for detection.
-- **No Remote Telemetry**: Camera frames are never transmitted over the internet or written to disk.
+- **100% Local Inference**: All computer vision runs locally on your machine's CPU/GPU. No camera frames or biometric data are transmitted over external networks.
+- **No Remote Telemetry**: Camera frames are processed in volatile memory and never transmitted over external networks or written to disk.
 - **No Facial Biometric Database**: Blindside does not identify *who* is looking; it calculates *where* a face is pointed relative to your screen. It never generates or stores persistent facial recognition vectors.
 - **No Screenshots**: The privacy overlay covers your window; it never reads, captures, or records your screen contents.
-- **Structured Audit Trails Only**: Blindside logs *events* (`blindside_threats.log`) for NIST SP 800-53 / ISO 27001 compliance, never biometric identifiers.
+- **Structured Audit Trails Only**: Blindside logs *events* (`blindside_threats.log`) for physical-access security event auditing (tagged with informational control metadata such as `Control=NIST_SP_800_53_PE_3`; logging this identifier does not establish regulatory compliance), never biometric identifiers.
 
 ---
 
 ## ✨ Features
 
 - **OpenCV YuNet Face Detection**: High-speed, lightweight convolutional neural network for real-time edge face detection and 5-point facial landmarking.
-- **True 6D Head Pose Estimation**: Computes spatial pitch, yaw, and roll using `cv::solvePnP` against an anthropometric 3D face model—no naive 2D bounding-box heuristics.
+- **3D Head Pose Estimation**: Computes spatial pitch, yaw, and roll using `cv::solvePnP` against an anthropometric 3D face model—no naive 2D bounding-box heuristics.
 - **Spatial Gaze Bounds**: Filters out people who happen to walk behind you; triggers only when a secondary face looks directly at your screen ($\pm 30^\circ$ yaw, $\pm 25^\circ$ pitch).
 - **Hysteresis Temporal Filtering**: Enforces a configurable dwell timer (default: `1.0s`) to eliminate false alarms from transient passersby.
-- **Per-Track Rotational Micro-Motion & FAR Proxy Liveness**: Evaluates involuntary pitch/yaw micro-movement variance and geometric Facial Aspect Ratio (FAR) deformation proxies independently per secondary face track over rolling time windows to reject static photo spoofs.
+- **Per-Track Rotational Micro-Motion & FAR Proxy Liveness**: Evaluates involuntary pitch/yaw micro-movement variance and geometric Facial Aspect Ratio (FAR, distinct from biometric False Acceptance Rate) deformation proxies independently per secondary face track over rolling time windows to reject static photo spoofs.
 - **Primary User Absence Defense (THREAT-03)**: Automatically detects primary user departure from calibrated screen bounds and triggers screen locking or workspace redaction after a configurable timeout with recovery dwell protection.
-- **Synthetic Eavesdropper Injection**: Deterministic synthetic camera simulation enables comprehensive CI pipeline testing of detection, solvePnP pose estimation, liveness, and threat triggering without physical hardware webcams.
+- **Inference Failure Isolation**: Explicit `DetectionResult` distinguishes neural inference failures from zero-face presence, suspending absence timers without false threat triggers and safely preserving active defense states.
+- **Synthetic Eavesdropper Injection**: Deterministic synthetic camera simulation injects structured face detections to exercise downstream solvePnP pose estimation, liveness, and threat triggering pipelines without requiring physical hardware webcams or live ONNX inference.
 - **Deduplicated Transition Audit Logging**: Writes structured security audit events on activation, escalation, and deactivation transitions rather than spamming every frame.
 - **Native Screen Redaction**: Spawns an instant, click-through, non-activating redaction mask over your active workspace window on supported platforms.
 - **Discrete Platform Capability Diagnostics**: Transparently reports native OS capabilities without misrepresenting platform features.
@@ -78,7 +79,7 @@ Blindside is built on a strict privacy model:
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/AshcrestHQ/Blindside.git
+git clone https://github.com/medhansh5/Blindside.git
 cd Blindside
 ```
 
@@ -205,7 +206,7 @@ Blindside is designed around complete physical privacy:
 - **No Cloud Dependency**: Runs entirely locally. No internet access is required.
 - **No Image Retention**: Frames are processed in volatile RAM buffers and immediately overwritten.
 - **No Facial Recognition Database**: Blindside does not identify who is looking at your screen, only their spatial gaze angle.
-- **Structured Audit Logging**: Writes structured security event summaries to `blindside_threats.log` (e.g. `Threat=TARGETED_WORKSPACE_BLUR GazeDurationSec=1.20 FacesDetected=2 Control=NIST_SP_800_53_PE_3`).
+- **Structured Audit Logging**: Writes structured security event summaries to `blindside_threats.log` for physical-access security event auditing (e.g. `Threat=TARGETED_WORKSPACE_BLUR_ACTIVATED GazeDurationSec=1.20 FacesDetected=2 Control=NIST_SP_800_53_PE_3`; logging this identifier does not establish regulatory compliance).
 
 For full details, see [docs/PRIVACY.md](docs/PRIVACY.md).
 
@@ -232,7 +233,7 @@ Blindside maintains an independent Python reference test suite in `tools/referen
 ```bash
 python tools/reference/test_blindside.py
 ```
-**Current Status**: 7/7 tests passed (synthetic fallback, calibration, gaze vectors, screen bounds, hysteresis, micro-movement liveness, spoof detection).
+**Test Scope**: Defines 7 unit test cases (synthetic fallback, calibration, gaze vectors, screen bounds, hysteresis, micro-movement liveness, spoof detection) requiring Python 3.10+ with `numpy` and `opencv-python`.
 
 ### 2. Native C++ Platform Test Suite (CTest)
 ```bash

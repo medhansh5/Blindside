@@ -2,7 +2,7 @@
 
 ---
 
-## Blindside V4.1.0 — Architecture Integrity, Per-Track Liveness & Primary Absence Release (2026-11-13)
+## Blindside V4.1.0 — Architecture Integrity, Per-Track Liveness & Primary Absence Release (Pending Publication / Milestone Baseline: 2026-11-13)
 
 > **Release Status**: Formal Maintenance & Feature Hardening Release.
 
@@ -15,19 +15,24 @@ Blindside V4.1.0 resolves key architectural debt identified in the V4.0 generati
 - **Cross-Contamination Eliminated**: Involuntary angular micro-motion (pitch/yaw variance $\ge 0.02$) is evaluated strictly per track ID. A moving live human and a static spoof photograph in the same frame maintain independent classifications.
 - **FAR Geometric Proxy**: Clarified that 5-point landmark models provide eye centroids without eyelid contours. Replaced misleading EAR/blink claims with an anthropometric Facial Aspect Ratio (FAR) deformation proxy (`compute_facial_aspect_ratio()`), preserving `compute_ear()` compatibility aliases.
 
-#### 2. Primary User Absence Defense (THREAT-03)
+#### 2. Primary User Absence Defense (THREAT-03) & Inference Failure Semantics
 - **Configurable Dwell & Timeout**: Enforces `primary_absence_timeout_sec` (default: 5.0s) before elevating to screen lock or workspace redaction, preventing false triggers from single missed frames or brief head turns.
 - **Return Recovery Hysteresis**: Requires sustained presence for `primary_recovery_dwell_sec` (default: 0.5s) when the user returns before clearing active defenses.
+- **Inference Failure Semantics**: Introduced explicit `DetectionResult` distinguishing neural inference failures from successful zero-face detections. On inference exceptions (`cv::Exception` or `std::exception`), absence timers are suspended rather than advancing, preventing false THREAT-03 absence locks. If an absence defense was already active, it is safely preserved without false unlocks. Failures are cleanly logged with one-time deduplication, and normal absence monitoring and eavesdropper tracking resume when inference succeeds.
 - **Camera Failure & Disconnect Isolation**: If the camera fails or disconnects, absence timers are paused. If an absence defense was already active when disconnection occurred, the lock state is preserved so the workstation does not unlock.
 
-#### 3. Synthetic Eavesdropper Injection Pipeline
-- **Deterministic Simulation**: Added `CameraCapture::set_synthetic_eavesdropper()`, generating synthetic primary and secondary faces with anthropometric landmarks and realistic micro-movement jitter.
-- **Full End-to-End Coverage**: Synthetic mode exercises the genuine OpenCV `solvePnP` pose estimation, gaze math, temporal tracking, and privacy trigger lifecycle without requiring physical hardware webcams or models on disk.
-- **Pipeline Test Suite**: Added `test_pipeline.cpp` validating detection, calibration, threat elevation, and recovery.
+#### 3. Synthetic Eavesdropper Injection & Pipeline Testing
+- **Deterministic Simulation**: Added `CameraCapture::set_synthetic_eavesdropper()`, generating synthetic primary and secondary face detections with anthropometric landmarks and realistic micro-movement jitter.
+- **Downstream Logic Coverage**: Synthetic mode injects structured detections directly into the frame pipeline, exercising downstream OpenCV `solvePnP` head pose estimation, gaze geometry, temporal tracking, per-track liveness evaluation, and privacy triggers without requiring physical webcams or live ONNX inference.
+- **Pipeline Test Suite (`tests/test_pipeline.cpp`)**:
+  - Validates full synthetic pipeline progression through calibration, threat elevation, and calm recovery.
+  - Validates live YuNet ONNX model inference on empty frames when the model file is available on disk (skipping gracefully if the model is absent from the test environment).
+  - Validates detector error handling for uninitialized instances, corrupt/mismatched buffer sizes, invalid frame dimensions, and verifies that clean empty frames are distinguished from inference failures.
 
 #### 4. Transition-Based Audit Log Deduplication
-- **Transition Gating**: Security event logging to `blindside_threats.log` (NIST SP 800-53 PE-3) now records state transitions (`_ACTIVATED`, `_ESCALATED`, `_DEACTIVATED`) instead of logging at active framerate (30 Hz).
+- **Transition Gating**: Physical-access security event auditing to `blindside_threats.log` records state transitions (`_ACTIVATED`, `_ESCALATED`, `_DEACTIVATED`) tagged with informational control metadata (`Control=NIST_SP_800_53_PE_3`) instead of logging at active framerate (30 Hz). Emitting this metadata tag provides structured categorization for event review, but does not establish or certify NIST, ISO 27001, or other regulatory compliance.
 - **Reduced Disk I/O**: Eliminates redundant log spam during sustained threats while maintaining an auditable security event trail.
+- **Platform Contract Test #11**: Added `test_audit_log_deduplication` to `tests/test_platform.cpp`, verifying that repeated alerts do not create redundant log entries.
 
 #### 5. Concurrency, Portability & Build Hardening
 - **Daemon State Thread-Safety**: Eliminated data race on `config_.daemon_state` across worker threads by utilizing thread-safe `atomic_state_` overrides.
@@ -103,7 +108,7 @@ Blindside V3.1.0 is the first field-tested, post-release iteration following the
 
 #### Pipeline & Core Stability
 - **Camera Recovery Integration**: Preserves thread-safe non-busy-loop recovery for GStreamer and OpenCV camera capture streams.
-- **Zero-Allocation Runtime**: Retains high-performance C++20 RingBuffer frame management and 6D `cv::solvePnP` pose estimation.
+- **Zero-Allocation Runtime**: Retains high-performance C++20 RingBuffer frame management and `cv::solvePnP`-based 3D head-orientation estimation.
 - **Hysteresis Privacy Triggers**: Preserves strict 1.0-second gaze hysteresis and multi-platform defense responses (targeted window blur & desktop session lock).
 
 #### Historical Limitations Documented for V3.1.0

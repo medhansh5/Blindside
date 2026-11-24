@@ -43,10 +43,10 @@ The Python reference implementation located in `tools/reference/` serves as an e
 python tools/reference/test_blindside.py
 ```
 
-### Verified Test Cases (7/7 Passed)
+### Reference Test Cases (7 Unit Tests)
 - `test_synthetic_camera_fallback`: Validates fallback to synthetic frame stream when hardware camera is missing.
 - `test_primary_user_calibration`: Validates spatial calibration of the primary operator bounding box.
-- `test_gaze_vector_computation`: Validates 6D pose estimation and spatial gaze vector projection.
+- `test_gaze_vector_computation`: Validates 3D head pose estimation and spatial gaze vector projection.
 - `test_screen_gaze_bounds`: Validates bounding logic for gaze directed toward display bounds.
 - `test_eavesdropper_gaze_hysteresis`: Validates that transient glances do not trigger defense until the hysteresis threshold ($> 1.0\text{s}$) is exceeded.
 - `test_live_user_micro_movements`: Validates rotational micro-movement variance detection for live users.
@@ -61,11 +61,14 @@ Native C++ tests are integrated with CMake and CTest.
 ### Prerequisites
 - C++20 compliant compiler (`MSVC 19.30+` / Visual Studio 2022, `GCC 11+`, or `Clang 14+`)
 - CMake 3.20+
-- OpenCV 4.10+ C++ development packages
+- OpenCV 4.10+ C++ development packages (required modules: `core, imgproc, videoio, highgui, objdetect, calib3d, dnn`)
+
+> [!NOTE]
+> **OpenCV Version Requirement**: OpenCV 4.10+ is strictly required for compatibility with the YuNet 2023mar ONNX model. On Ubuntu 24.04 LTS runners, the default distribution package (`libopencv-dev` 4.6) is incompatible and triggers an ONNX layer failure (`Layer with requested id=-1 not found in function 'getLayerData'`). The Linux CI workflow builds OpenCV 4.10.0 from source with the required modules and caches it across runs.
 
 ### How to Build & Run
 
-#### Linux (Ubuntu 26.04+ / Debian)
+#### Linux (Ubuntu 24.04 LTS+ / Debian)
 ```bash
 # 1. Configure
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -91,12 +94,12 @@ ctest --test-dir build -C Release --output-on-failure
 
 ### Registered Native Test Targets
 1. `test_ring_buffer`: Fixed-capacity zero-allocation circular buffer push, pop, overwrite, and boundary safety.
-2. `test_gaze_math`: 6D pose math, perspective projection, and Euler angle conversion.
-3. `test_eavesdropper`: Multi-face calibration, secondary face filtering, and temporal dwell timers.
-4. `test_liveness`: Angular variance thresholds and Eye Aspect Ratio (EAR) blink detection.
-5. `test_pipeline`: End-to-end simulated frame progression through detection and trigger stages.
+2. `test_gaze_math`: 3D head pose math (pitch, yaw, roll), perspective projection, and Euler angle conversion.
+3. `test_eavesdropper`: Multi-face calibration, secondary face filtering, temporal dwell timers, per-track liveness isolation, primary user absence lifecycle (THREAT-03), and inference failure semantics.
+4. `test_liveness`: Angular variance thresholds and Facial Aspect Ratio (FAR) geometric deformation proxy anti-spoofing.
+5. `test_pipeline`: Synthetic eavesdropper injection pipeline (deterministic structured detection fixtures exercising solvePnP, tracking, threat detection, and triggers without physical hardware webcams or live ONNX inference), YuNet ONNX model pipeline inference on empty frames when the model file is available on disk (skipping gracefully if absent), and detector error handling with recovery.
 6. `test_camera_failure`: Pipeline resilience when camera frames become corrupted or hardware disconnects.
-7. `test_platform`: Dedicated 10-test platform hardening suite.
+7. `test_platform`: Dedicated 11-test platform hardening suite.
 
 ---
 
@@ -116,6 +119,7 @@ ctest --test-dir build -C Release --output-on-failure
 | 8 | `test_platform_resilience_and_graceful_recovery` | Drains event pumps when no windows exist; tests geometry queries in headless environments. |
 | 9 | `test_threat_independent_from_platform` | Verifies that threat assessment data remains identical and pure regardless of whether platform overlays are active. |
 | 10 | `test_platform_response_does_not_modify_threat_engine` | Verifies that platform trigger execution never mutates or feeds back into threat assessment models. |
+| 11 | `test_audit_log_deduplication` | Verifies that audit logging records security events strictly on state transitions (`_ACTIVATED`, `_ESCALATED`, `_DEACTIVATED`) and deduplicates repeated alerts across frames. |
 
 ---
 
@@ -123,6 +127,6 @@ ctest --test-dir build -C Release --output-on-failure
 
 > [!NOTE]
 > **Environment Note:**
-> - On the current development machine, the Python reference test suite has been executed and verified (**7/7 tests passed**).
-> - Native C++ compilation and CTest execution have **not** been executed locally on this host due to the absence of a native C++ compiler toolchain (Visual Studio `cl.exe` / GCC).
+> - On the current development host, Python reference tests and native CTest targets have not been executed locally due to the absence of required environment dependencies (`numpy` for Python, Visual Studio MSVC / GCC for C++).
+> - Test suites are designed for execution in configured CI environments (Ubuntu 24.04 and Windows runners) with full dependency toolchains.
 > - Native binaries must be compiled and executed on a host or CI runner equipped with Visual Studio 2022 or GCC 11+.

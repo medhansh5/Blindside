@@ -20,7 +20,7 @@ Only the `main` branch (v4.x) gets patches. If you're on v3.x or earlier, upgrad
 ## 🛡️ The Guarantees
 
 If you find a bug that breaks any of these four rules, we want to know immediately:
-1. **Zero Network Traffic**: Blindside shouldn't even look at a network socket.
+1. **Zero External Network Transmission**: Blindside runs entirely locally; it must never transmit camera frames, biometric data, or surveillance telemetry over external networks.
 2. **Zero Disk I/O for Video**: Frames go into the RAM ring buffer and die there.
 3. **100% Local Inference**: YuNet and SolvePnP run on your local silicon.
 4. **No Biometrics Saved**: We log threat events, not faces.
